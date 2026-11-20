@@ -1,0 +1,6 @@
+{
+  "name": "LAST ZONE",
+  "description": "A 3D browser-based Battle Royale survival game powered by Three.js and Rapier physics.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
