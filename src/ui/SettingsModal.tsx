@@ -2,6 +2,7 @@ import React from 'react';
 import { X } from 'lucide-react';
 import {
   DeviceCapabilities,
+  GameDifficulty,
   GameSettings,
   GraphicsQuality,
   InputModeSetting,
@@ -20,6 +21,12 @@ const INPUT_MODES: Array<{ value: InputModeSetting; label: string }> = [
   { value: 'auto', label: 'Auto' },
   { value: 'touch', label: 'Mobile Touch' },
   { value: 'keyboard-mouse', label: 'Keyboard & Mouse' },
+];
+
+const DIFFICULTIES: Array<{ value: GameDifficulty; label: string; desc: string }> = [
+  { value: 'easy', label: 'Easy', desc: 'Slower AI reactions, lower pressure' },
+  { value: 'normal', label: 'Normal', desc: 'Balanced tactical AI (Default)' },
+  { value: 'hard', label: 'Hard', desc: 'Sharper aim & persistent pressure' },
 ];
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({
@@ -56,6 +63,33 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         </div>
 
         <div className="space-y-4 sm:space-y-5 text-sm">
+          {/* AI Combat Difficulty */}
+          <div>
+            <div className="flex items-center justify-between mb-2 gap-2">
+              <span className="text-slate-200 font-medium">AI Difficulty</span>
+              <span className="text-xs text-slate-400">
+                {(DIFFICULTIES.find((d) => d.value === settings.difficulty) ?? DIFFICULTIES[1]).desc}
+              </span>
+            </div>
+            <div className="grid grid-cols-3 gap-1.5 bg-[#0F1318] p-1 border border-white/10">
+              {DIFFICULTIES.map((diff) => (
+                <button
+                  key={diff.value}
+                  type="button"
+                  data-testid={`settings-difficulty-${diff.value}`}
+                  onClick={() => onChange({ ...settings, difficulty: diff.value })}
+                  className={`py-2 px-1 text-xs font-medium transition-colors cursor-pointer whitespace-nowrap ${
+                    settings.difficulty === diff.value
+                      ? 'bg-amber-500 text-slate-950 font-semibold'
+                      : 'text-slate-300 hover:text-white'
+                  }`}
+                >
+                  {diff.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
           {/* Adaptive Control Mode */}
           <div>
             <div className="flex items-center justify-between mb-2 gap-2">

@@ -1,26 +1,37 @@
 import React from 'react';
 import { Settings, Play, Crosshair, Shield, Compass, MapPin } from 'lucide-react';
-import { MapId, ResolvedInputMode } from '../types/game';
+import { GameDifficulty, MapId, ResolvedInputMode } from '../types/game';
 import { MAP_CATALOG, MAP_LIST } from '../world/MapCatalog';
 
 interface MainMenuProps {
   ready: boolean;
   selectedMapId: MapId;
+  difficulty: GameDifficulty;
   inputMode?: ResolvedInputMode;
   onSelectMap: (mapId: MapId) => void;
+  onSelectDifficulty: (difficulty: GameDifficulty) => void;
   onStartMatch: () => void;
   onOpenSettings: () => void;
 }
 
+const DIFFICULTIES: Array<{ id: GameDifficulty; label: string; note: string }> = [
+  { id: 'easy', label: 'Easy', note: 'Relaxed reactions & lower pressure' },
+  { id: 'normal', label: 'Normal', note: 'Balanced Battle Royale combat' },
+  { id: 'hard', label: 'Hard', note: 'Faster bots & sharper pressure' },
+];
+
 export const MainMenu: React.FC<MainMenuProps> = ({
   ready,
   selectedMapId,
+  difficulty,
   inputMode = 'keyboard-mouse',
   onSelectMap,
+  onSelectDifficulty,
   onStartMatch,
   onOpenSettings,
 }) => {
   const activeMap = MAP_CATALOG[selectedMapId];
+  const activeDiff = DIFFICULTIES.find((d) => d.id === difficulty) ?? DIFFICULTIES[1];
   const isTouch = inputMode === 'touch';
 
   return (
@@ -88,6 +99,33 @@ export const MainMenu: React.FC<MainMenuProps> = ({
                     </button>
                   );
                 })}
+              </div>
+            </div>
+
+            {/* AI Difficulty Selector */}
+            <div>
+              <div className="flex items-center justify-between mb-2 gap-2">
+                <span className="text-xs font-semibold tracking-wide text-slate-200">
+                  Combat Difficulty
+                </span>
+                <span className="text-xs text-slate-400 truncate">{activeDiff.note}</span>
+              </div>
+              <div className="grid grid-cols-3 gap-1.5 bg-[#0F1318] p-1 border border-white/10">
+                {DIFFICULTIES.map((d) => (
+                  <button
+                    key={d.id}
+                    type="button"
+                    data-testid={`menu-difficulty-${d.id}`}
+                    onClick={() => onSelectDifficulty(d.id)}
+                    className={`py-2 px-2 text-xs font-medium transition-colors cursor-pointer whitespace-nowrap ${
+                      difficulty === d.id
+                        ? 'bg-amber-500 text-slate-950 font-semibold'
+                        : 'text-slate-300 hover:text-white'
+                    }`}
+                  >
+                    {d.label}
+                  </button>
+                ))}
               </div>
             </div>
 

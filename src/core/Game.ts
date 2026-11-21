@@ -102,6 +102,8 @@ export class Game {
   private disposed = false;
   private ready = false;
   private menuOrbitAngle = 0.4;
+  private currentElapsed = 0;
+  private lastPlayerFireTime = -10;
 
   constructor(
     private container: HTMLElement,
@@ -352,6 +354,7 @@ export class Game {
     this.isFiring = false;
     this.prevFireHeld = false;
     this.isAiming = false;
+    this.lastPlayerFireTime = -10;
     this.input.resetForNewMatch();
 
     this.setScreen('playing');
@@ -413,6 +416,7 @@ export class Game {
 
   public applySettings(next: GameSettings): void {
     this.settings = { ...next };
+    this.ai.setDifficulty(next.difficulty);
     this.input.applySettings(next);
     this.audio.setVolume(next.masterVolume);
     this.cameraCtrl.setBaseFov(next.fov);
@@ -482,6 +486,7 @@ export class Game {
 
   private update(dt: number, elapsed: number): void {
     if (!this.ready || this.disposed) return;
+    this.currentElapsed = elapsed;
 
     const playerInput = this.input.pollInput();
 
@@ -667,6 +672,11 @@ export class Game {
           y: playerFeetY,
           z: this.movement.position.z,
           alive: !this.health.eliminated,
+          health: this.health.health,
+          maxHealth: this.health.maxHealth,
+          isCrouching: this.movement.isCrouching,
+          isSprinting: this.movement.isSprinting,
+          lastFiredAt: this.lastPlayerFireTime,
         },
         this.safeZone,
         this.physics,
@@ -759,6 +769,15 @@ export class Game {
     }
 
     this.audio.playGunshot(weapon.id, 1);
+    this.lastPlayerFireTime = this.currentElapsed;
+    this.ai.notifySoundEvent(
+      this.movement.position.x,
+      this.movement.getFeetY(),
+      this.movement.position.z,
+      'player',
+      weapon.id === 'mr12' ? 95 : weapon.id === 'p9' ? 68 : 84,
+      this.currentElapsed,
+    );
     this.avatar.triggerFireKick();
     this.cameraCtrl.addRecoil(weapon.recoil * (this.isAiming ? 0.65 : 1.0));
 
@@ -805,7 +824,7 @@ export class Game {
       const bot = this.ai.bots.find((b) => b.id === out.hitTargetId);
       if (!bot || bot.state === 'Eliminated') continue;
 
-      const res = this.ai.applyDamageToBot(bot, out.damage);
+      const res = this.ai.applyDamageToBot(bot, out.damage, 'player', this.currentElapsed);
       this.damageDealt += Math.round(res.damage);
       anyHit = true;
 
@@ -832,6 +851,14 @@ export class Game {
     this.audio.playGunshot(ev.bot.weapon.id, audioScale * 0.72);
 
     this.gunfireBlips.push({ x: ev.bot.x, z: ev.bot.z, timeLeft: 2.2 });
+    this.ai.notifySoundEvent(
+      ev.bot.x,
+      ev.bot.y,
+      ev.bot.z,
+      ev.bot.id,
+      ev.bot.weapon.id === 'mr12' ? 92 : 78,
+      this.currentElapsed,
+    );
 
     _botOrigin.set(ev.bot.x, ev.bot.y + 1.45, ev.bot.z);
     const botRig = this.botRigs.get(ev.bot.id);
@@ -842,7 +869,7 @@ export class Game {
       .set(ev.target.x - ev.bot.x, ev.target.y + 1.2 - (ev.bot.y + 1.45), ev.target.z - ev.bot.z)
       .normalize();
 
-    this.combat.fireWeaponRay(_botOrigin, _botDir, _botMuzzle, ev.bot.weapon, [], 1.2);
+    this.combat.fireWeaponRay(_botOrigin, _botDir, _botMuzzle, ev.bot.weapon, [], ev.hit ? 0.85 : 1.9);
 
     if (!ev.hit) return;
 
@@ -857,7 +884,7 @@ export class Game {
     } else {
       const targetBot = this.ai.bots.find((b) => b.id === ev.target.id);
       if (targetBot && targetBot.state !== 'Eliminated') {
-        const res = this.ai.applyDamageToBot(targetBot, ev.damage);
+        const res = this.ai.applyDamageToBot(targetBot, ev.damage, ev.bot.id, this.currentElapsed);
         if (res.eliminated) {
           this.handleBotEliminated(targetBot, ev.bot.name, ev.bot.weapon.name);
         }
@@ -1064,6 +1091,7 @@ export class Game {
       pointerLocked: this.input.isPointerLocked(),
       inputMode: this.input.getResolvedMode(),
       inputModeSetting: this.input.getModeSetting(),
+      difficulty: this.settings.difficulty,
       deviceCapabilities: this.input.getCapabilities(),
       ammoReserves: { ...this.inventory.ammoReserves },
     });

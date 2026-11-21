@@ -10,6 +10,10 @@ export type BiomeZone = 'urban' | 'forest' | 'mountain' | 'industrial';
 
 export type BotState = 'Idle' | 'Explore' | 'Search' | 'Alert' | 'Evade' | 'Eliminated';
 
+export type GameDifficulty = 'easy' | 'normal' | 'hard';
+
+export type AIPersonality = 'aggressive' | 'defensive' | 'opportunistic' | 'cautious';
+
 export type ItemCategory = 'primary' | 'secondary' | 'medical' | 'armor' | 'ammo';
 
 export type InputModeSetting = 'auto' | 'touch' | 'keyboard-mouse';
@@ -38,6 +42,7 @@ export interface GameSettings {
   masterVolume: number;
   showFps: boolean;
   inputMode: InputModeSetting;
+  difficulty: GameDifficulty;
 }
 
 export interface WeaponSpec {
@@ -170,6 +175,7 @@ export interface HudSnapshot {
   pointerLocked: boolean;
   inputMode: ResolvedInputMode;
   inputModeSetting: InputModeSetting;
+  difficulty: GameDifficulty;
   deviceCapabilities: DeviceCapabilities;
   ammoReserves: Record<string, number>;
 }

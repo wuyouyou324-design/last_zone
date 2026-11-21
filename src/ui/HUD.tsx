@@ -41,10 +41,10 @@ export const HUD: React.FC<HUDProps> = ({
 }) => {
   const minimapRef = useRef<HTMLCanvasElement | null>(null);
   const isTouchLayout = hud.inputMode === 'touch';
+  const isTouchLandscape =
+    isTouchLayout && hud.deviceCapabilities.orientation === 'landscape';
   const isCompactLandscape =
-    isTouchLayout &&
-    hud.deviceCapabilities.orientation === 'landscape' &&
-    hud.deviceCapabilities.viewportHeight < 500;
+    isTouchLandscape && hud.deviceCapabilities.viewportHeight < 500;
 
   useEffect(() => {
     const canvas = minimapRef.current;
@@ -174,7 +174,7 @@ export const HUD: React.FC<HUDProps> = ({
                 ref={minimapRef}
                 width={120}
                 height={120}
-                className={isCompactLandscape ? 'block w-16 h-16' : 'block w-20 h-20'}
+                className="block w-16 h-16"
               />
               <div className="mt-0.5 flex items-center justify-between px-0.5 text-[9px] text-slate-400">
                 <span className="font-mono-tabular text-sky-400">
@@ -450,9 +450,9 @@ export const HUD: React.FC<HUDProps> = ({
       <div
         className={`fixed left-1/2 -translate-x-1/2 flex flex-col items-center gap-2 ${
           isTouchLayout
-            ? isCompactLandscape
-              ? 'bottom-[92px]'
-              : 'bottom-[296px]'
+            ? isTouchLandscape
+              ? 'bottom-[68px]'
+              : 'bottom-[228px]'
             : 'bottom-32'
         }`}
       >
@@ -512,57 +512,111 @@ export const HUD: React.FC<HUDProps> = ({
         </div>
       )}
 
-      {/* Vitals, Stamina, Armor & Weapon Bar (Responsive for Desktop vs Touch Portrait vs Touch Landscape) */}
+      {/* Vitals, Stamina, Armor & Weapon Bar (Edge-docked on mobile so center view stays clear) */}
       {isTouchLayout ? (
-        <div
-          data-testid="mobile-vitals-bar"
-          className={`fixed z-10 bg-[#0F1318]/90 border border-white/12 ${
-            isCompactLandscape
-              ? 'bottom-2.5 left-[44%] -translate-x-1/2 w-[min(276px,36vw)] px-2.5 py-2'
-              : 'bottom-[216px] left-1/2 -translate-x-1/2 w-[min(364px,94vw)] px-3 py-2'
-          }`}
-        >
-          <div className="grid grid-cols-12 gap-2.5 items-center">
-            <div className="col-span-7 space-y-1.5">
-              <div>
-                <div className="flex items-center justify-between text-[11px] mb-0.5">
-                  <span className="text-slate-300 font-medium">
-                    HP {hud.isCrouching ? '· Crouch' : ''}
-                  </span>
-                  <span className="font-mono-tabular font-bold text-slate-100">
-                    {Math.ceil(hud.health)}/{hud.maxHealth}
-                  </span>
+        isTouchLandscape ? (
+          <div
+            data-testid="mobile-vitals-bar"
+            className="fixed z-10 bottom-2 left-[44%] -translate-x-1/2 w-[min(264px,34vw)] bg-[#0F1318]/85 border border-white/12 px-2.5 py-1.5"
+          >
+            <div className="grid grid-cols-12 gap-2 items-center">
+              <div className="col-span-7 space-y-1">
+                <div>
+                  <div className="flex items-center justify-between text-[10px] mb-0.5">
+                    <span className="text-slate-300 font-medium">
+                      HP {hud.isCrouching ? '· Crouch' : ''}
+                    </span>
+                    <span className="font-mono-tabular font-bold text-slate-100">
+                      {Math.ceil(hud.health)}/{hud.maxHealth}
+                    </span>
+                  </div>
+                  <div className="h-1.5 bg-white/10">
+                    <div
+                      className={`h-full transition-all duration-100 ${healthColor}`}
+                      style={{ width: `${(hud.health / hud.maxHealth) * 100}%` }}
+                    />
+                  </div>
                 </div>
-                <div className="h-2 bg-white/10">
-                  <div
-                    className={`h-full transition-all duration-100 ${healthColor}`}
-                    style={{ width: `${(hud.health / hud.maxHealth) * 100}%` }}
-                  />
+
+                <div className="flex items-center gap-1.5">
+                  <div className="flex-1 h-1 bg-white/10">
+                    <div
+                      className="h-full bg-amber-400 transition-all duration-75"
+                      style={{ width: `${(hud.stamina / hud.maxStamina) * 100}%` }}
+                    />
+                  </div>
+                  <span className="font-mono-tabular text-[9px] text-slate-300">
+                    {Math.round(hud.stamina)}%
+                  </span>
                 </div>
               </div>
 
-              <div className="flex items-center gap-2">
-                <div className="flex-1 h-1.5 bg-white/10">
-                  <div
-                    className="h-full bg-amber-400 transition-all duration-75"
-                    style={{ width: `${(hud.stamina / hud.maxStamina) * 100}%` }}
-                  />
+              <div className="col-span-5 border-l border-white/10 pl-2">
+                <div className="text-[9px] text-slate-400 truncate">
+                  {activeWeapon ? activeWeapon.name : 'No Weapon'}
                 </div>
-                <span className="font-mono-tabular text-[10px] text-slate-300">
-                  {Math.round(hud.stamina)}%
+                <div className="font-display text-base font-bold font-mono-tabular text-slate-100 leading-tight">
+                  {activeMag}
+                  <span className="text-[10px] text-slate-400 font-normal ml-1">/ {activeReserve}</span>
+                </div>
+                <div className="flex items-center gap-2 text-[9px] text-slate-400">
+                  <span className="inline-flex items-center gap-0.5">
+                    <Shield className="w-2.5 h-2.5 text-emerald-400" />
+                    <span className="font-mono-tabular">{Math.round(hud.equipped.vestDurability)}</span>
+                  </span>
+                  <span className="inline-flex items-center gap-0.5">
+                    <Shield className="w-2.5 h-2.5 text-sky-400" />
+                    <span className="font-mono-tabular">{Math.round(hud.equipped.helmetDurability)}</span>
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div
+            data-testid="mobile-vitals-bar"
+            className="fixed z-10 top-[130px] left-2.5 w-[134px] bg-[#0F1318]/86 border border-white/12 px-2 py-1.5 space-y-1.5"
+          >
+            <div>
+              <div className="flex items-center justify-between text-[10px] mb-0.5">
+                <span className="text-slate-300 font-medium">
+                  HP {hud.isCrouching ? '· Crouch' : ''}
                 </span>
+                <span className="font-mono-tabular font-bold text-slate-100">
+                  {Math.ceil(hud.health)}/{hud.maxHealth}
+                </span>
+              </div>
+              <div className="h-1.5 bg-white/10">
+                <div
+                  className={`h-full transition-all duration-100 ${healthColor}`}
+                  style={{ width: `${(hud.health / hud.maxHealth) * 100}%` }}
+                />
               </div>
             </div>
 
-            <div className="col-span-5 border-l border-white/10 pl-2.5">
-              <div className="text-[10px] text-slate-400 truncate">
-                {activeWeapon ? activeWeapon.name : 'No Weapon'}
+            <div className="flex items-center gap-1.5">
+              <div className="flex-1 h-1 bg-white/10">
+                <div
+                  className="h-full bg-amber-400 transition-all duration-75"
+                  style={{ width: `${(hud.stamina / hud.maxStamina) * 100}%` }}
+                />
               </div>
-              <div className="font-display text-lg font-bold font-mono-tabular text-slate-100 leading-tight">
-                {activeMag}
-                <span className="text-[11px] text-slate-400 font-normal ml-1">/ {activeReserve}</span>
+              <span className="font-mono-tabular text-[9px] text-slate-300">
+                {Math.round(hud.stamina)}%
+              </span>
+            </div>
+
+            <div className="border-t border-white/10 pt-1 flex items-center justify-between gap-1">
+              <div className="min-w-0">
+                <div className="text-[9px] text-slate-400 truncate">
+                  {activeWeapon ? activeWeapon.name : 'No Weapon'}
+                </div>
+                <div className="font-display text-sm font-bold font-mono-tabular text-slate-100 leading-tight">
+                  {activeMag}
+                  <span className="text-[10px] text-slate-400 font-normal ml-0.5">/{activeReserve}</span>
+                </div>
               </div>
-              <div className="flex items-center gap-2 text-[10px] text-slate-400">
+              <div className="flex flex-col items-end text-[9px] text-slate-400 shrink-0">
                 <span className="inline-flex items-center gap-0.5">
                   <Shield className="w-2.5 h-2.5 text-emerald-400" />
                   <span className="font-mono-tabular">{Math.round(hud.equipped.vestDurability)}</span>
@@ -574,7 +628,7 @@ export const HUD: React.FC<HUDProps> = ({
               </div>
             </div>
           </div>
-        </div>
+        )
       ) : (
         <div className="fixed bottom-4 left-1/2 -translate-x-1/2 w-[min(540px,92vw)] bg-[#0F1318]/90 border border-white/12 p-3">
           <div className="grid grid-cols-12 gap-3 items-center">

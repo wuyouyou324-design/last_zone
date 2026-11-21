@@ -1,9 +1,20 @@
-import { BotState, WeaponSpec } from '../types/game';
+import { AIPersonality, BotState, WeaponSpec } from '../types/game';
 import { WEAPON_CATALOG } from '../systems/Inventory';
+import { PERSONALITY_SEQUENCE } from './AIConfig';
+
+export interface BotMemoryPosition {
+  valid: boolean;
+  x: number;
+  y: number;
+  z: number;
+  timestamp: number;
+  sourceId: string | null;
+}
 
 export interface BotEntity {
   id: string;
   name: string;
+  personality: AIPersonality;
   x: number;
   y: number; // feet Y
   z: number;
@@ -28,6 +39,21 @@ export interface BotEntity {
   variantIndex: number;
   lastFiredAt: number;
   colliderHandle: number;
+
+  // Perception, memory, reaction, and anti-focus-fire state
+  perceptionTimer: number;
+  reactionTimer: number;
+  targetSwitchCooldown: number;
+  lastSeenTargetAt: number;
+  lostSightGraceTimer: number;
+  lastKnownTargetPos: BotMemoryPosition;
+  heardSoundPos: BotMemoryPosition;
+  lastDamageFromId: string | null;
+  lastDamagedAt: number;
+  burstShotsLeft: number;
+  burstPauseTimer: number;
+  currentlyEngagingPlayer: boolean;
+  visibleEnemyIds: Set<string>;
 }
 
 const BOT_NAMES = [
@@ -53,10 +79,12 @@ export function createBotEntity(
 ): BotEntity {
   const starterWeapons = [WEAPON_CATALOG.vx47, WEAPON_CATALOG.mr12, WEAPON_CATALOG.sg8, WEAPON_CATALOG.p9];
   const weapon = starterWeapons[index % starterWeapons.length];
+  const personality = PERSONALITY_SEQUENCE[index % PERSONALITY_SEQUENCE.length];
 
   return {
     id: `bot-${index + 1}`,
     name: BOT_NAMES[index % BOT_NAMES.length],
+    personality,
     x,
     y,
     z,
@@ -81,5 +109,33 @@ export function createBotEntity(
     variantIndex: index,
     lastFiredAt: -10,
     colliderHandle,
+
+    perceptionTimer: (index % 6) * 0.02, // staggered initial perception across frames
+    reactionTimer: 0,
+    targetSwitchCooldown: 0,
+    lastSeenTargetAt: -100,
+    lostSightGraceTimer: 0,
+    lastKnownTargetPos: {
+      valid: false,
+      x: 0,
+      y: 0,
+      z: 0,
+      timestamp: -100,
+      sourceId: null,
+    },
+    heardSoundPos: {
+      valid: false,
+      x: 0,
+      y: 0,
+      z: 0,
+      timestamp: -100,
+      sourceId: null,
+    },
+    lastDamageFromId: null,
+    lastDamagedAt: -100,
+    burstShotsLeft: 3,
+    burstPauseTimer: 0,
+    currentlyEngagingPlayer: false,
+    visibleEnemyIds: new Set<string>(),
   };
 }

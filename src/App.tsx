@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Game } from './core/Game';
-import { GameSettings, HudSnapshot, MapId, MatchSummary } from './types/game';
+import { GameDifficulty, GameSettings, HudSnapshot, MapId, MatchSummary } from './types/game';
 import { HUD } from './ui/HUD';
 import { InventoryModal } from './ui/InventoryModal';
 import { MainMenu } from './ui/MainMenu';
@@ -19,6 +19,7 @@ const DEFAULT_SETTINGS: GameSettings = {
   masterVolume: 0.65,
   showFps: true,
   inputMode: 'auto',
+  difficulty: 'normal',
 };
 
 function loadSettings(): GameSettings {
@@ -52,6 +53,12 @@ function loadSettings(): GameSettings {
         parsed.inputMode === 'keyboard-mouse'
           ? parsed.inputMode
           : DEFAULT_SETTINGS.inputMode,
+      difficulty:
+        parsed.difficulty === 'easy' ||
+        parsed.difficulty === 'normal' ||
+        parsed.difficulty === 'hard'
+          ? parsed.difficulty
+          : DEFAULT_SETTINGS.difficulty,
     };
   } catch {
     return DEFAULT_SETTINGS;
@@ -107,6 +114,10 @@ export default function App() {
     gameRef.current?.applySettings(next);
   };
 
+  const handleSelectDifficulty = (difficulty: GameDifficulty) => {
+    handleSettingsChange({ ...settings, difficulty });
+  };
+
   const handleSelectMap = (mapId: MapId) => {
     setSelectedMapId(mapId);
     gameRef.current?.selectMap(mapId);
@@ -144,8 +155,10 @@ export default function App() {
         <MainMenu
           ready={ready}
           selectedMapId={selectedMapId}
+          difficulty={settings.difficulty}
           inputMode={hud?.inputMode}
           onSelectMap={handleSelectMap}
+          onSelectDifficulty={handleSelectDifficulty}
           onStartMatch={handleStartMatch}
           onOpenSettings={() => setSettingsOpen(true)}
         />
