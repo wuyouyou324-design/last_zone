@@ -20,6 +20,7 @@ import {
 import { MaterialLibrary } from '../world/Materials';
 import { IslandMap } from '../world/Map';
 import { getTerrainHeight, getZoneAt } from '../world/Terrain';
+import { WeaponModelId, WeaponModelsFactory } from '../weapons/WeaponModels';
 import { AudioSystem } from './AudioSystem';
 import { detectSoftwareWebGL, GameLoop } from './GameLoop';
 import { PhysicsWorld } from './PhysicsWorld';
@@ -46,6 +47,7 @@ export class Game {
   public readonly audio = new AudioSystem();
   private physics = new PhysicsWorld();
   private materials!: MaterialLibrary;
+  private weaponFactory!: WeaponModelsFactory;
   private map!: IslandMap;
   private avatar!: PlayerAvatar;
   private movement = new MovementController();
@@ -93,6 +95,10 @@ export class Game {
   private gunfireBlips: Array<{ x: number; z: number; timeLeft: number }> = [];
   private hudEmitAccum = 0;
   private pointerLocked = false;
+  private pointerLockPending = false;
+  private pointerLockRejected = false;
+  private lastPointerLockExitAt = 0;
+  private lastPointerLockReqAt = 0;
   private disposed = false;
   private ready = false;
   private menuOrbitAngle = 0.4;
@@ -179,6 +185,7 @@ export class Game {
 
     const maxAniso = this.renderer.capabilities.getMaxAnisotropy();
     this.materials = new MaterialLibrary(maxAniso);
+    this.weaponFactory = new WeaponModelsFactory(maxAniso);
     this.map = new IslandMap(this.materials, this.physics);
     this.scene.add(this.map.root);
 
@@ -191,7 +198,7 @@ export class Game {
     this.combat = new CombatSystem(this.physics);
     this.scene.add(this.combat.fxGroup);
 
-    this.avatar = new PlayerAvatar(this.materials);
+    this.avatar = new PlayerAvatar(this.materials, this.weaponFactory);
     this.scene.add(this.avatar.bodyGroup);
     this.cameraCtrl.camera.add(this.avatar.viewmodelGroup);
 
@@ -305,11 +312,11 @@ export class Game {
     helmet.position.set(0, 1.72, 0);
     helmet.castShadow = true;
 
-    const rifle = new THREE.Mesh(
-      this.regBotGeo(new THREE.BoxGeometry(0.08, 0.12, 0.76)),
-      this.materials.gunMetal,
-    );
-    rifle.position.set(0.28, 1.16, -0.32);
+    const wId = bot.weapon.id as WeaponModelId;
+    const rifle = this.weaponFactory.createInstance(wId, true);
+    rifle.scale.setScalar(1.2);
+    rifle.position.set(0.36, 1.15, -0.32);
+    rifle.rotation.set(-0.04, 0.14, 0);
 
     grp.add(leftLeg, rightLeg, torso, head, helmet, rifle);
     this.scene.add(grp);
@@ -328,7 +335,12 @@ export class Game {
       this.isAiming = false;
       this.clearMovementInputs();
       if (document.pointerLockElement === this.renderer.domElement) {
-        document.exitPointerLock();
+        this.lastPointerLockExitAt = performance.now();
+        try {
+          document.exitPointerLock();
+        } catch {
+          // Ignore exitPointerLock errors
+        }
       }
     }
     this.emitHudSnapshot();
@@ -343,12 +355,36 @@ export class Game {
 
   public requestPointerLock(): void {
     const canvas = this.renderer.domElement;
-    if (document.pointerLockElement !== canvas && canvas.requestPointerLock) {
-      try {
-        void canvas.requestPointerLock();
-      } catch {
-        // Ignore browser gesture restriction errors
+    if (!canvas || typeof canvas.requestPointerLock !== 'function') return;
+    if (document.pointerLockElement === canvas || this.pointerLockPending) return;
+
+    const now = performance.now();
+    // Debounce re-locking right after exit/rejection to avoid Chromium Blink>Input>PointerLock UnknownError
+    if (now - this.lastPointerLockExitAt < 200 || now - this.lastPointerLockReqAt < 200) {
+      return;
+    }
+
+    this.lastPointerLockReqAt = now;
+    this.pointerLockPending = true;
+    try {
+      const maybePromise = canvas.requestPointerLock() as unknown as Promise<void> | undefined;
+      if (maybePromise && typeof maybePromise.then === 'function') {
+        maybePromise.then(
+          () => {
+            this.pointerLockPending = false;
+            this.pointerLockRejected = false;
+          },
+          () => {
+            this.pointerLockPending = false;
+            this.pointerLockRejected = true;
+          },
+        );
+      } else {
+        this.pointerLockPending = false;
       }
+    } catch {
+      this.pointerLockPending = false;
+      this.pointerLockRejected = true;
     }
   }
 
@@ -565,7 +601,7 @@ export class Game {
         this.cameraCtrl,
         this.isAiming,
         this.reloadTimer !== null,
-        activeWeapon?.colorHex,
+        activeWeapon?.id,
       );
 
       // Keep shadow frustum centered near player for crisp shadows
@@ -623,7 +659,7 @@ export class Game {
     this.cameraCtrl.getAimForward(_camForward);
 
     if (this.cameraCtrl.mode === 'first-person') {
-      this.avatar.viewmodelGroup.getWorldPosition(_muzzlePos);
+      this.avatar.getMuzzleWorldPosition(_muzzlePos);
     } else {
       _muzzlePos.set(
         this.movement.position.x,
@@ -1012,7 +1048,9 @@ export class Game {
   };
 
   private onMouseMove = (e: MouseEvent): void => {
-    if (this.screen !== 'playing' || !this.pointerLocked) return;
+    if (this.screen !== 'playing') return;
+    const fallbackDragLook = !this.pointerLocked && this.pointerLockRejected && (e.buttons & 2) !== 0;
+    if (!this.pointerLocked && !fallbackDragLook) return;
     this.cameraCtrl.addLookDelta(e.movementX, e.movementY, this.settings.mouseSensitivity);
   };
 
@@ -1021,7 +1059,9 @@ export class Game {
     this.audio.unlock();
     if (!this.pointerLocked) {
       this.requestPointerLock();
-      return;
+      if (!this.pointerLockRejected) {
+        return;
+      }
     }
     if (e.button === 0) {
       this.isFiring = true;
@@ -1037,12 +1077,24 @@ export class Game {
   };
 
   private onPointerLockChange = (): void => {
+    this.pointerLockPending = false;
+    const wasLocked = this.pointerLocked;
     this.pointerLocked = document.pointerLockElement === this.renderer.domElement;
+    if (this.pointerLocked) {
+      this.pointerLockRejected = false;
+    } else if (wasLocked) {
+      this.lastPointerLockExitAt = performance.now();
+    }
     if (!this.pointerLocked && this.screen === 'playing') {
       this.isFiring = false;
       this.isAiming = false;
     }
     this.emitHudSnapshot();
+  };
+
+  private onPointerLockError = (): void => {
+    this.pointerLockPending = false;
+    this.pointerLockRejected = true;
   };
 
   private onContextMenu = (e: MouseEvent): void => {
@@ -1066,6 +1118,7 @@ export class Game {
     this.renderer.domElement.addEventListener('mousedown', this.onMouseDown);
     window.addEventListener('mouseup', this.onMouseUp);
     document.addEventListener('pointerlockchange', this.onPointerLockChange);
+    document.addEventListener('pointerlockerror', this.onPointerLockError);
     this.renderer.domElement.addEventListener('contextmenu', this.onContextMenu);
     this.renderer.domElement.addEventListener('webglcontextlost', this.onContextLost);
     this.renderer.domElement.addEventListener('webglcontextrestored', this.onContextRestored);
@@ -1082,6 +1135,7 @@ export class Game {
     this.renderer.domElement.removeEventListener('mousedown', this.onMouseDown);
     window.removeEventListener('mouseup', this.onMouseUp);
     document.removeEventListener('pointerlockchange', this.onPointerLockChange);
+    document.removeEventListener('pointerlockerror', this.onPointerLockError);
     this.renderer.domElement.removeEventListener('contextmenu', this.onContextMenu);
     this.renderer.domElement.removeEventListener('webglcontextlost', this.onContextLost);
     this.renderer.domElement.removeEventListener('webglcontextrestored', this.onContextRestored);
@@ -1092,6 +1146,7 @@ export class Game {
     this.safeZone?.dispose();
     this.combat?.dispose();
     this.avatar?.dispose();
+    this.weaponFactory?.dispose();
     this.materials?.dispose();
     this.botGeometries.forEach((g) => g.dispose());
     this.botTorsoMat?.dispose();

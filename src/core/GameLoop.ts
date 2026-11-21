@@ -1,4 +1,4 @@
-import * as THREE from 'three';
+import type * as THREE from 'three';
 
 export function detectSoftwareWebGL(): boolean {
   try {
@@ -16,7 +16,8 @@ export function detectSoftwareWebGL(): boolean {
 }
 
 export class GameLoop {
-  private clock = new THREE.Clock();
+  private startTimeMs = 0;
+  private lastTickMs = 0;
   private frameId = 0;
   private running = false;
   private fpsAccum = 0;
@@ -32,7 +33,8 @@ export class GameLoop {
   public start(): void {
     if (this.running) return;
     this.running = true;
-    this.clock.start();
+    this.startTimeMs = performance.now();
+    this.lastTickMs = this.startTimeMs;
     this.scheduleNext();
   }
 
@@ -53,9 +55,11 @@ export class GameLoop {
 
   private tick(): void {
     if (!this.running) return;
-    const rawDelta = this.clock.getDelta();
+    const nowMs = performance.now();
+    const rawDelta = (nowMs - this.lastTickMs) / 1000;
+    this.lastTickMs = nowMs;
     const dt = Math.min(0.05, Math.max(0.001, rawDelta));
-    const elapsed = this.clock.getElapsedTime();
+    const elapsed = (nowMs - this.startTimeMs) / 1000;
 
     this.fpsAccum += rawDelta;
     this.fpsFrames += 1;

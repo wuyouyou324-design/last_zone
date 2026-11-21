@@ -1,22 +1,35 @@
 import * as THREE from 'three';
 import { MaterialLibrary } from '../world/Materials';
+import {
+  WEAPON_ASSEMBLY_META,
+  WeaponModelId,
+  WeaponModelsFactory,
+} from '../weapons/WeaponModels';
 import { CameraController } from './Camera';
 import { MovementController } from './Movement';
+
+const ALL_WEAPON_IDS: WeaponModelId[] = ['vx47', 'mr12', 'sg8', 'p9'];
+
+function toWeaponModelId(id?: string): WeaponModelId {
+  if (id === 'vx47' || id === 'mr12' || id === 'sg8' || id === 'p9') return id;
+  return 'p9';
+}
 
 export class PlayerAvatar {
   public readonly bodyGroup = new THREE.Group();
   public readonly viewmodelGroup = new THREE.Group();
   private leftLeg: THREE.Mesh;
   private rightLeg: THREE.Mesh;
-  private weaponBarrelVM: THREE.Mesh;
-  private weaponBodyVM: THREE.Mesh;
+  private vmWeapons = new Map<WeaponModelId, THREE.Group>();
+  private tpWeapons = new Map<WeaponModelId, THREE.Group>();
+  private activeWeaponId: WeaponModelId = 'p9';
   private vmRecoilOffset = 0;
   private stridePhase = 0;
   private geometries: THREE.BufferGeometry[] = [];
   private visorMat: THREE.MeshStandardMaterial;
   private vestMat: THREE.MeshStandardMaterial;
 
-  constructor(materials: MaterialLibrary) {
+  constructor(materials: MaterialLibrary, weaponFactory: WeaponModelsFactory) {
     this.visorMat = new THREE.MeshStandardMaterial({
       color: 0x1e293b,
       roughness: 0.2,
@@ -28,7 +41,7 @@ export class PlayerAvatar {
       metalness: 0.12,
     });
 
-    // Composite 3rd-person player character (8 parts, bottom-center pivot at feet)
+    // Composite 3rd-person player character (bottom-center pivot at feet)
     const legGeo = this.reg(new THREE.BoxGeometry(0.22, 0.78, 0.24));
     legGeo.translate(0, -0.39, 0);
     this.leftLeg = new THREE.Mesh(legGeo, materials.polymerDark);
@@ -72,12 +85,6 @@ export class PlayerAvatar {
     );
     visor.position.set(0, 1.63, -0.15);
 
-    const rifleProp = new THREE.Mesh(
-      this.reg(new THREE.BoxGeometry(0.08, 0.12, 0.75)),
-      materials.gunMetal,
-    );
-    rifleProp.position.set(0.28, 1.16, -0.32);
-
     this.bodyGroup.add(
       this.leftLeg,
       this.rightLeg,
@@ -86,36 +93,26 @@ export class PlayerAvatar {
       head,
       helmet,
       visor,
-      rifleProp,
     );
+
+    // Mount all 4 refined 3D weapons on 3P body & 1P viewmodel (toggled via visibility)
+    for (const id of ALL_WEAPON_IDS) {
+      const vm = weaponFactory.createInstance(id, false);
+      vm.visible = id === this.activeWeaponId;
+      this.viewmodelGroup.add(vm);
+      this.vmWeapons.set(id, vm);
+
+      const tp = weaponFactory.createInstance(id, true);
+      tp.scale.setScalar(1.2);
+      tp.position.set(0.36, 1.15, -0.32);
+      tp.rotation.set(-0.04, 0.14, 0);
+      tp.visible = id === this.activeWeaponId;
+      this.bodyGroup.add(tp);
+      this.tpWeapons.set(id, tp);
+    }
+
     this.bodyGroup.visible = false; // Hidden in 1st-person
-
-    // Composite 1st-person Weapon Viewmodel (attached to camera)
-    this.weaponBodyVM = new THREE.Mesh(
-      this.reg(new THREE.BoxGeometry(0.075, 0.11, 0.42)),
-      materials.polymerDark,
-    );
-    this.weaponBarrelVM = new THREE.Mesh(
-      this.reg(new THREE.BoxGeometry(0.036, 0.042, 0.36)),
-      materials.gunMetal,
-    );
-    this.weaponBarrelVM.position.set(0, 0.025, -0.32);
-
-    const sightRail = new THREE.Mesh(
-      this.reg(new THREE.BoxGeometry(0.04, 0.032, 0.16)),
-      materials.gunMetal,
-    );
-    sightRail.position.set(0, 0.072, -0.02);
-
-    const mag = new THREE.Mesh(
-      this.reg(new THREE.BoxGeometry(0.046, 0.14, 0.075)),
-      materials.concreteDark,
-    );
-    mag.position.set(0, -0.1, -0.04);
-    mag.rotation.x = 0.16;
-
-    this.viewmodelGroup.add(this.weaponBodyVM, this.weaponBarrelVM, sightRail, mag);
-    this.viewmodelGroup.position.set(0.24, -0.22, -0.45);
+    this.viewmodelGroup.position.set(0.23, -0.19, -0.42);
   }
 
   private reg<T extends THREE.BufferGeometry>(g: T): T {
@@ -124,7 +121,14 @@ export class PlayerAvatar {
   }
 
   public triggerFireKick(): void {
-    this.vmRecoilOffset = 0.065;
+    this.vmRecoilOffset = 0.055;
+  }
+
+  public getMuzzleWorldPosition(out: THREE.Vector3): THREE.Vector3 {
+    const meta = WEAPON_ASSEMBLY_META[this.activeWeaponId];
+    out.set(0, meta.muzzleY, meta.muzzleZ);
+    this.viewmodelGroup.localToWorld(out);
+    return out;
   }
 
   public updateVisuals(
@@ -133,8 +137,19 @@ export class PlayerAvatar {
     cameraCtrl: CameraController,
     isAiming: boolean,
     isReloading: boolean,
-    weaponColorHex?: number,
+    weaponId?: string,
   ): void {
+    const nextId = toWeaponModelId(weaponId);
+    if (nextId !== this.activeWeaponId) {
+      this.activeWeaponId = nextId;
+      for (const id of ALL_WEAPON_IDS) {
+        const vm = this.vmWeapons.get(id);
+        if (vm) vm.visible = id === nextId;
+        const tp = this.tpWeapons.get(id);
+        if (tp) tp.visible = id === nextId;
+      }
+    }
+
     const isThirdPerson = cameraCtrl.mode === 'third-person';
     this.bodyGroup.visible = isThirdPerson;
     this.viewmodelGroup.visible = !isThirdPerson;
@@ -156,24 +171,42 @@ export class PlayerAvatar {
 
     if (!isThirdPerson) {
       this.vmRecoilOffset = THREE.MathUtils.damp(this.vmRecoilOffset, 0, 16, dt);
-      const bobX = movement.isMoving && movement.grounded ? Math.cos(this.stridePhase * 0.5) * 0.012 : 0;
-      const bobY = movement.isMoving && movement.grounded ? Math.abs(Math.sin(this.stridePhase)) * 0.014 : 0;
+      const bobX =
+        movement.isMoving && movement.grounded ? Math.cos(this.stridePhase * 0.5) * 0.01 : 0;
+      const bobY =
+        movement.isMoving && movement.grounded ? Math.abs(Math.sin(this.stridePhase)) * 0.012 : 0;
 
-      const targetX = isAiming ? 0.0 : 0.24 + bobX;
-      const targetY = isReloading ? -0.34 : isAiming ? -0.155 : -0.22 - bobY;
-      const targetZ = (isAiming ? -0.36 : -0.45) + this.vmRecoilOffset;
+      const meta = WEAPON_ASSEMBLY_META[this.activeWeaponId];
+      const targetX = isAiming ? meta.adsOffsetX : 0.23 + bobX;
+      const targetY = isReloading ? -0.32 : isAiming ? meta.adsOffsetY : -0.19 - bobY;
+      const targetZ = (isAiming ? meta.adsOffsetZ : -0.42) + this.vmRecoilOffset;
 
-      this.viewmodelGroup.position.x = THREE.MathUtils.damp(this.viewmodelGroup.position.x, targetX, 16, dt);
-      this.viewmodelGroup.position.y = THREE.MathUtils.damp(this.viewmodelGroup.position.y, targetY, 16, dt);
-      this.viewmodelGroup.position.z = THREE.MathUtils.damp(this.viewmodelGroup.position.z, targetZ, 20, dt);
-      this.viewmodelGroup.rotation.x = isReloading ? -0.45 : this.vmRecoilOffset * 1.4;
-      if (weaponColorHex !== undefined) {
-        this.weaponBodyVM.material = this.weaponBodyVM.material;
-      }
+      this.viewmodelGroup.position.x = THREE.MathUtils.damp(
+        this.viewmodelGroup.position.x,
+        targetX,
+        16,
+        dt,
+      );
+      this.viewmodelGroup.position.y = THREE.MathUtils.damp(
+        this.viewmodelGroup.position.y,
+        targetY,
+        16,
+        dt,
+      );
+      this.viewmodelGroup.position.z = THREE.MathUtils.damp(
+        this.viewmodelGroup.position.z,
+        targetZ,
+        20,
+        dt,
+      );
+      this.viewmodelGroup.rotation.x = isReloading ? -0.42 : this.vmRecoilOffset * 1.25;
+      this.viewmodelGroup.rotation.y = isAiming ? 0 : 0.03;
     }
   }
 
   public dispose(): void {
+    this.vmWeapons.clear();
+    this.tpWeapons.clear();
     this.geometries.forEach((g) => g.dispose());
     this.visorMat.dispose();
     this.vestMat.dispose();

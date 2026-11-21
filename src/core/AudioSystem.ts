@@ -24,7 +24,9 @@ export class AudioSystem {
       this.noiseBuffer = this.createNoiseBuffer(this.ctx);
     }
     if (this.ctx.state === 'suspended') {
-      void this.ctx.resume();
+      this.ctx.resume().catch(() => {
+        // Ignore browser autoplay policy rejections until user interaction
+      });
     }
   }
 
@@ -256,7 +258,9 @@ export class AudioSystem {
 
   public dispose(): void {
     if (this.ctx) {
-      void this.ctx.close();
+      this.ctx.close().catch(() => {
+        // Ignore close errors on already-closed AudioContext
+      });
       this.ctx = null;
       this.masterGain = null;
       this.noiseBuffer = null;
