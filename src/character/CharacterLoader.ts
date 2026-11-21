@@ -13,6 +13,12 @@ export interface CharacterAssetBundle {
   fpArms: CharacterTemplate;
 }
 
+function resolveAssetUrl(relativePath: string): string {
+  const base = import.meta.env.BASE_URL || './';
+  const normalizedBase = base.endsWith('/') ? base : `${base}/`;
+  return `${normalizedBase}${relativePath.replace(/^\/+/, '')}`;
+}
+
 export class CharacterLoader {
   private loader = new GLTFLoader();
   private bundle: CharacterAssetBundle | null = null;
@@ -23,9 +29,9 @@ export class CharacterLoader {
     if (this.loadPromise) return this.loadPromise;
 
     this.loadPromise = Promise.all([
-      this.loadGltf('/assets/characters/tactical_operator_lod0.glb'),
-      this.loadGltf('/assets/characters/tactical_operator_lod1.glb'),
-      this.loadGltf('/assets/characters/fp_tactical_arms.glb'),
+      this.loadGltf(resolveAssetUrl('assets/characters/tactical_operator_lod0.glb')),
+      this.loadGltf(resolveAssetUrl('assets/characters/tactical_operator_lod1.glb')),
+      this.loadGltf(resolveAssetUrl('assets/characters/fp_tactical_arms.glb')),
     ]).then(([lod0Gltf, lod1Gltf, fpArmsGltf]) => {
       const prepTemplate = (gltf: GLTF, castShadow: boolean): CharacterTemplate => {
         gltf.scene.traverse((obj) => {

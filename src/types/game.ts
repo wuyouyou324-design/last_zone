@@ -12,13 +12,32 @@ export type BotState = 'Idle' | 'Explore' | 'Search' | 'Alert' | 'Evade' | 'Elim
 
 export type ItemCategory = 'primary' | 'secondary' | 'medical' | 'armor' | 'ammo';
 
+export type InputModeSetting = 'auto' | 'touch' | 'keyboard-mouse';
+
+export type ResolvedInputMode = 'touch' | 'keyboard-mouse';
+
+export interface DeviceCapabilities {
+  hasTouch: boolean;
+  hasCoarsePointer: boolean;
+  hasFinePointer: boolean;
+  hasHover: boolean;
+  likelyKeyboard: boolean;
+  likelyMouse: boolean;
+  isHybrid: boolean;
+  orientation: 'portrait' | 'landscape';
+  viewportWidth: number;
+  viewportHeight: number;
+}
+
 export interface GameSettings {
   quality: GraphicsQuality;
   shadows: boolean;
   fov: number;
   mouseSensitivity: number;
+  touchSensitivity: number;
   masterVolume: number;
   showFps: boolean;
+  inputMode: InputModeSetting;
 }
 
 export interface WeaponSpec {
@@ -149,6 +168,9 @@ export interface HudSnapshot {
   minimapBlips: MinimapBlip[];
   fps: number;
   pointerLocked: boolean;
+  inputMode: ResolvedInputMode;
+  inputModeSetting: InputModeSetting;
+  deviceCapabilities: DeviceCapabilities;
   ammoReserves: Record<string, number>;
 }
 

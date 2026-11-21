@@ -15,8 +15,8 @@ export const PauseMenu: React.FC<PauseMenuProps> = ({
   onExitToMenu,
 }) => {
   return (
-    <div className="fixed inset-0 z-30 flex items-center justify-center bg-[#0A0D11]/80 p-6">
-      <div className="w-full max-w-sm border border-white/12 bg-[#141A22] p-7 shadow-2xl">
+    <div className="fixed inset-0 z-30 flex items-start sm:items-center justify-center bg-[#0A0D11]/80 py-4 px-3 sm:p-6 overflow-y-auto touch-pan-y">
+      <div className="my-auto w-full max-w-sm border border-white/12 bg-[#141A22] p-6 sm:p-7 shadow-2xl">
         <p className="text-xs text-amber-400 font-semibold tracking-wider uppercase mb-1">
           Match Paused
         </p>

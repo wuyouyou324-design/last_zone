@@ -18,8 +18,8 @@ export const MatchResults: React.FC<MatchResultsProps> = ({
   const formattedTime = `${mins}m ${String(secs).padStart(2, '0')}s`;
 
   return (
-    <div className="fixed inset-0 z-30 flex items-center justify-center bg-[#0A0D11]/88 p-6">
-      <div className="w-full max-w-xl border border-white/12 bg-[#141A22] p-8 shadow-2xl">
+    <div className="fixed inset-0 z-30 flex items-start sm:items-center justify-center bg-[#0A0D11]/88 py-4 px-3 sm:p-6 overflow-y-auto touch-pan-y">
+      <div className="my-auto w-full max-w-xl border border-white/12 bg-[#141A22] p-6 sm:p-8 shadow-2xl">
         <div className="flex items-center gap-3 mb-2">
           {summary.victory ? (
             <Trophy className="w-6 h-6 text-amber-400" />

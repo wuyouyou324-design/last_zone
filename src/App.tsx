@@ -15,8 +15,10 @@ const DEFAULT_SETTINGS: GameSettings = {
   shadows: true,
   fov: 78,
   mouseSensitivity: 1.0,
+  touchSensitivity: 1.0,
   masterVolume: 0.65,
   showFps: true,
+  inputMode: 'auto',
 };
 
 function loadSettings(): GameSettings {
@@ -35,11 +37,21 @@ function loadSettings(): GameSettings {
         typeof parsed.mouseSensitivity === 'number'
           ? parsed.mouseSensitivity
           : DEFAULT_SETTINGS.mouseSensitivity,
+      touchSensitivity:
+        typeof parsed.touchSensitivity === 'number'
+          ? parsed.touchSensitivity
+          : DEFAULT_SETTINGS.touchSensitivity,
       masterVolume:
         typeof parsed.masterVolume === 'number'
           ? parsed.masterVolume
           : DEFAULT_SETTINGS.masterVolume,
       showFps: typeof parsed.showFps === 'boolean' ? parsed.showFps : DEFAULT_SETTINGS.showFps,
+      inputMode:
+        parsed.inputMode === 'auto' ||
+        parsed.inputMode === 'touch' ||
+        parsed.inputMode === 'keyboard-mouse'
+          ? parsed.inputMode
+          : DEFAULT_SETTINGS.inputMode,
     };
   } catch {
     return DEFAULT_SETTINGS;
@@ -57,21 +69,28 @@ export default function App() {
   const [hud, setHud] = useState<HudSnapshot | null>(null);
   const [matchSummary, setMatchSummary] = useState<MatchSummary | null>(null);
   const [contextLost, setContextLost] = useState(false);
+  const [initError, setInitError] = useState<string | null>(null);
 
   useEffect(() => {
     const mount = canvasMountRef.current;
     if (!mount) return;
 
-    const game = new Game(mount, settings, {
-      onHudUpdate: (snap) => setHud(snap),
-      onMatchEnd: (summary) => setMatchSummary(summary),
-      onContextIssue: (lost) => setContextLost(lost),
-      onReady: () => setReady(true),
-    });
-    gameRef.current = game;
+    let game: Game | null = null;
+    try {
+      game = new Game(mount, settings, {
+        onHudUpdate: (snap) => setHud(snap),
+        onMatchEnd: (summary) => setMatchSummary(summary),
+        onContextIssue: (lost) => setContextLost(lost),
+        onReady: () => setReady(true),
+        onInitError: (message) => setInitError(message),
+      });
+      gameRef.current = game;
+    } catch (err) {
+      setInitError(err instanceof Error ? err.message : String(err));
+    }
 
     return () => {
-      game.dispose();
+      game?.dispose();
       gameRef.current = null;
     };
     // Mount WebGL scene once
@@ -104,16 +123,18 @@ export default function App() {
   return (
     <div className="relative w-full h-full overflow-hidden bg-[#0F1318]">
       {/* Isolated WebGL Canvas Container */}
-      <div ref={canvasMountRef} className="fixed inset-0 w-full h-full" />
+      <div ref={canvasMountRef} className="fixed inset-0 w-full h-full touch-gameplay-surface" />
 
-      {contextLost && (
+      {(contextLost || initError) && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0F1318]/95 p-6">
           <div className="max-w-md border border-white/12 bg-[#141A22] p-6 text-center">
             <h2 className="font-display text-xl font-bold text-slate-100">
-              Graphics Context Interrupted
+              {initError ? 'Unable to Initialize 3D Engine' : 'Graphics Context Interrupted'}
             </h2>
             <p className="mt-2 text-sm text-slate-400">
-              WebGL rendering was temporarily suspended by the browser. Reload the page if it does not resume automatically.
+              {initError
+                ? `Initialization failed: ${initError}. Make sure WebGL2 is enabled and static assets are deployed from dist/.`
+                : 'WebGL rendering was temporarily suspended by the browser. Reload the page if it does not resume automatically.'}
             </p>
           </div>
         </div>
@@ -123,6 +144,7 @@ export default function App() {
         <MainMenu
           ready={ready}
           selectedMapId={selectedMapId}
+          inputMode={hud?.inputMode}
           onSelectMap={handleSelectMap}
           onStartMatch={handleStartMatch}
           onOpenSettings={() => setSettingsOpen(true)}
@@ -133,9 +155,11 @@ export default function App() {
         <HUD
           hud={hud}
           minimapSource={gameRef.current?.getMinimapCanvas() ?? null}
+          touchInput={gameRef.current?.getTouchInput() ?? null}
           showFps={settings.showFps}
           onRequestLock={() => gameRef.current?.requestPointerLock()}
           onOpenInventory={() => gameRef.current?.setScreen('inventory')}
+          onPause={() => gameRef.current?.setScreen('paused')}
         />
       )}
 
@@ -173,6 +197,8 @@ export default function App() {
       {settingsOpen && (
         <SettingsModal
           settings={settings}
+          resolvedInputMode={hud?.inputMode}
+          deviceCapabilities={hud?.deviceCapabilities}
           onChange={handleSettingsChange}
           onClose={() => setSettingsOpen(false)}
         />

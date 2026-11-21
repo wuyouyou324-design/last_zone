@@ -22,8 +22,8 @@ export const InventoryModal: React.FC<InventoryModalProps> = ({
   const { equipped, inventory, ammoReserves } = hud;
 
   return (
-    <div className="fixed inset-0 z-30 flex items-center justify-center bg-[#0A0D11]/82 p-6">
-      <div className="w-full max-w-4xl border border-white/12 bg-[#141A22] p-6 md:p-7 shadow-2xl">
+    <div className="fixed inset-0 z-30 flex items-start sm:items-center justify-center bg-[#0A0D11]/82 py-4 px-3 sm:p-6 overflow-y-auto touch-pan-y">
+      <div className="my-auto w-full max-w-4xl border border-white/12 bg-[#141A22] p-5 sm:p-6 md:p-7 shadow-2xl">
         <div className="flex items-center justify-between border-b border-white/10 pb-4 mb-6">
           <div>
             <h2 className="font-display text-xl font-bold text-slate-100">

@@ -9,8 +9,10 @@ import {
 import { CharacterInstance } from '../character/CharacterInstance';
 import { CharacterLODController } from '../character/CharacterLOD';
 import { CharacterAssetBundle, CharacterLoader } from '../character/CharacterLoader';
+import { InputManager } from '../input/InputManager';
+import { TouchInput } from '../input/TouchInput';
 import { CameraController } from '../player/Camera';
-import { MovementController, MovementInput } from '../player/Movement';
+import { MovementController } from '../player/Movement';
 import { PlayerAvatar } from '../player/Player';
 import { CombatSystem, CombatTarget } from '../systems/Combat';
 import { HealthSystem } from '../systems/Health';
@@ -53,6 +55,7 @@ export class Game {
   public readonly scene: THREE.Scene;
   public readonly cameraCtrl: CameraController;
   public readonly audio = new AudioSystem();
+  public readonly input: InputManager;
   private physics = new PhysicsWorld();
   private materials!: MaterialLibrary;
   private weaponFactory!: WeaponModelsFactory;
@@ -81,16 +84,8 @@ export class Game {
   private onMatchEnd: (summary: MatchSummary) => void;
   private onContextIssue: (lost: boolean) => void;
 
-  private input: MovementInput = {
-    forward: false,
-    backward: false,
-    left: false,
-    right: false,
-    sprint: false,
-    crouch: false,
-    jump: false,
-  };
   private isFiring = false;
+  private prevFireHeld = false;
   private isAiming = false;
   private fireCooldown = 0;
   private reloadTimer: { elapsed: number; total: number; weaponName: string } | null = null;
@@ -104,11 +99,6 @@ export class Game {
   private killFeed: KillFeedEntry[] = [];
   private gunfireBlips: Array<{ x: number; z: number; timeLeft: number }> = [];
   private hudEmitAccum = 0;
-  private pointerLocked = false;
-  private pointerLockPending = false;
-  private pointerLockRejected = false;
-  private lastPointerLockExitAt = 0;
-  private lastPointerLockReqAt = 0;
   private disposed = false;
   private ready = false;
   private menuOrbitAngle = 0.4;
@@ -121,6 +111,7 @@ export class Game {
       onMatchEnd: (summary: MatchSummary) => void;
       onContextIssue: (lost: boolean) => void;
       onReady: () => void;
+      onInitError?: (message: string) => void;
     },
   ) {
     this.settings = { ...initialSettings };
@@ -149,10 +140,36 @@ export class Game {
     this.cameraCtrl = new CameraController(aspect);
     this.scene.add(this.cameraCtrl.camera);
 
+    this.input = new InputManager(this.renderer.domElement, this.settings, {
+      onModeChanged: () => this.emitHudSnapshot(),
+      onPointerLockChanged: () => {
+        if (!this.input.isPointerLocked() && this.screen === 'playing') {
+          this.isFiring = false;
+          this.isAiming = false;
+        }
+        this.emitHudSnapshot();
+      },
+      onUnlockAudio: () => this.audio.unlock(),
+      onToggleInventory: () => {
+        if (this.screen === 'playing') {
+          this.setScreen('inventory');
+        } else if (this.screen === 'inventory') {
+          this.resumePlaying();
+        }
+      },
+      onTogglePause: () => {
+        if (this.screen === 'playing' || this.screen === 'inventory') {
+          this.setScreen('paused');
+        } else if (this.screen === 'paused') {
+          this.resumePlaying();
+        }
+      },
+    });
+
     this.setupLightingAndEnvironment();
     this.bindEvents();
 
-    void this.initAsync(callbacks.onReady);
+    void this.initAsync(callbacks.onReady, callbacks.onInitError);
   }
 
   private setupLightingAndEnvironment(): void {
@@ -202,54 +219,63 @@ export class Game {
     this.sunLight.intensity = spec.sunIntensity;
   }
 
-  private async initAsync(onReady: () => void): Promise<void> {
-    const [, charBundle] = await Promise.all([
-      this.physics.init(),
-      this.characterLoader.loadAll(),
-    ]);
-    if (this.disposed) return;
+  private async initAsync(
+    onReady: () => void,
+    onInitError?: (message: string) => void,
+  ): Promise<void> {
+    try {
+      const [, charBundle] = await Promise.all([
+        this.physics.init(),
+        this.characterLoader.loadAll(),
+      ]);
+      if (this.disposed) return;
 
-    this.characterBundle = charBundle;
-    const maxAniso = this.renderer.capabilities.getMaxAnisotropy();
-    this.materials = new MaterialLibrary(maxAniso);
-    this.weaponFactory = new WeaponModelsFactory(maxAniso);
-    this.characterAppearance = new CharacterAppearanceLibrary(maxAniso);
-    this.map = new IslandMap(this.materials, this.physics, this.activeMapId);
-    this.scene.add(this.map.root);
-    this.applyMapAtmosphere(this.activeMapId);
+      this.characterBundle = charBundle;
+      const maxAniso = this.renderer.capabilities.getMaxAnisotropy();
+      this.materials = new MaterialLibrary(maxAniso);
+      this.weaponFactory = new WeaponModelsFactory(maxAniso);
+      this.characterAppearance = new CharacterAppearanceLibrary(maxAniso);
+      this.map = new IslandMap(this.materials, this.physics, this.activeMapId);
+      this.scene.add(this.map.root);
+      this.applyMapAtmosphere(this.activeMapId);
 
-    this.inventory = new InventorySystem(this.materials);
-    this.scene.add(this.inventory.lootGroup);
+      this.inventory = new InventorySystem(this.materials);
+      this.scene.add(this.inventory.lootGroup);
 
-    this.safeZone = new SafeZoneSystem();
-    this.scene.add(this.safeZone.wallMesh);
+      this.safeZone = new SafeZoneSystem();
+      this.scene.add(this.safeZone.wallMesh);
 
-    this.combat = new CombatSystem(this.physics);
-    this.scene.add(this.combat.fxGroup);
+      this.combat = new CombatSystem(this.physics);
+      this.scene.add(this.combat.fxGroup);
 
-    this.avatar = new PlayerAvatar(
-      this.characterBundle,
-      this.characterLoader,
-      this.characterAppearance,
-      this.weaponFactory,
-    );
-    this.scene.add(this.avatar.bodyGroup);
-    this.cameraCtrl.camera.add(this.avatar.viewmodelGroup);
+      this.avatar = new PlayerAvatar(
+        this.characterBundle,
+        this.characterLoader,
+        this.characterAppearance,
+        this.weaponFactory,
+      );
+      this.scene.add(this.avatar.bodyGroup);
+      this.cameraCtrl.camera.add(this.avatar.viewmodelGroup);
 
-    this.physics.createPlayerController(0, this.map.getHeightAt(0, 0) + 1.1, 0);
-    this.applySettings(this.settings);
+      this.physics.createPlayerController(0, this.map.getHeightAt(0, 0) + 1.1, 0);
+      this.applySettings(this.settings);
 
-    if (!this.isSoftwareGl) {
-      this.renderer.compile(this.scene, this.cameraCtrl.camera);
+      if (!this.isSoftwareGl) {
+        this.renderer.compile(this.scene, this.cameraCtrl.camera);
+      }
+
+      this.ready = true;
+      this.loop = new GameLoop(this.renderer, this.isSoftwareGl, (dt, elapsed) =>
+        this.update(dt, elapsed),
+      );
+      this.loop.start();
+      this.emitHudSnapshot();
+      onReady();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error('LAST ZONE initialization error:', err);
+      onInitError?.(message);
     }
-
-    this.ready = true;
-    this.loop = new GameLoop(this.renderer, this.isSoftwareGl, (dt, elapsed) =>
-      this.update(dt, elapsed),
-    );
-    this.loop.start();
-    this.emitHudSnapshot();
-    onReady();
   }
 
   public selectMap(mapId: MapId): void {
@@ -277,6 +303,10 @@ export class Game {
 
   public getMinimapCanvas(): HTMLCanvasElement | null {
     return this.map ? this.map.minimapCanvas : null;
+  }
+
+  public getTouchInput(): TouchInput {
+    return this.input.touch;
   }
 
   public startNewMatch(): void {
@@ -320,7 +350,9 @@ export class Game {
     this.killFeed = [];
     this.gunfireBlips = [];
     this.isFiring = false;
+    this.prevFireHeld = false;
     this.isAiming = false;
+    this.input.resetForNewMatch();
 
     this.setScreen('playing');
     this.requestPointerLock();
@@ -358,18 +390,12 @@ export class Game {
 
   public setScreen(next: GameScreen): void {
     this.screen = next;
+    this.input.setScreen(next);
     if (next !== 'playing') {
       this.isFiring = false;
+      this.prevFireHeld = false;
       this.isAiming = false;
-      this.clearMovementInputs();
-      if (document.pointerLockElement === this.renderer.domElement) {
-        this.lastPointerLockExitAt = performance.now();
-        try {
-          document.exitPointerLock();
-        } catch {
-          // Ignore exitPointerLock errors
-        }
-      }
+      this.input.clearActiveStates();
     }
     this.emitHudSnapshot();
   }
@@ -382,42 +408,12 @@ export class Game {
   }
 
   public requestPointerLock(): void {
-    const canvas = this.renderer.domElement;
-    if (!canvas || typeof canvas.requestPointerLock !== 'function') return;
-    if (document.pointerLockElement === canvas || this.pointerLockPending) return;
-
-    const now = performance.now();
-    // Debounce re-locking right after exit/rejection to avoid Chromium Blink>Input>PointerLock UnknownError
-    if (now - this.lastPointerLockExitAt < 200 || now - this.lastPointerLockReqAt < 200) {
-      return;
-    }
-
-    this.lastPointerLockReqAt = now;
-    this.pointerLockPending = true;
-    try {
-      const maybePromise = canvas.requestPointerLock() as unknown as Promise<void> | undefined;
-      if (maybePromise && typeof maybePromise.then === 'function') {
-        maybePromise.then(
-          () => {
-            this.pointerLockPending = false;
-            this.pointerLockRejected = false;
-          },
-          () => {
-            this.pointerLockPending = false;
-            this.pointerLockRejected = true;
-          },
-        );
-      } else {
-        this.pointerLockPending = false;
-      }
-    } catch {
-      this.pointerLockPending = false;
-      this.pointerLockRejected = true;
-    }
+    this.input.requestPointerLock();
   }
 
   public applySettings(next: GameSettings): void {
     this.settings = { ...next };
+    this.input.applySettings(next);
     this.audio.setVolume(next.masterVolume);
     this.cameraCtrl.setBaseFov(next.fov);
 
@@ -487,6 +483,8 @@ export class Game {
   private update(dt: number, elapsed: number): void {
     if (!this.ready || this.disposed) return;
 
+    const playerInput = this.input.pollInput();
+
     if (this.screen === 'menu') {
       // Gentle cinematic flyover camera over the 4-zone island on Main Menu
       this.menuOrbitAngle += dt * 0.085;
@@ -498,6 +496,20 @@ export class Game {
       this.safeZone.update(dt * 0.4, elapsed);
       this.renderer.render(this.scene, this.cameraCtrl.camera);
       return;
+    }
+
+    if (playerInput.toggleInventory) {
+      if (this.screen === 'playing') {
+        this.setScreen('inventory');
+      } else if (this.screen === 'inventory') {
+        this.resumePlaying();
+      }
+    } else if (playerInput.togglePause) {
+      if (this.screen === 'playing' || this.screen === 'inventory') {
+        this.setScreen('paused');
+      } else if (this.screen === 'paused') {
+        this.resumePlaying();
+      }
     }
 
     // Active simulation update when playing or inventory is open (world remains live!)
@@ -516,17 +528,68 @@ export class Game {
         }
       }
 
+      if (this.screen === 'playing') {
+        if (playerInput.lookDeltaX !== 0 || playerInput.lookDeltaY !== 0) {
+          this.cameraCtrl.addLookDelta(playerInput.lookDeltaX, playerInput.lookDeltaY, 1.0);
+        }
+        if (playerInput.toggleCamera) {
+          this.toggleCameraMode();
+        }
+        if (playerInput.interact) {
+          this.pickupNearestLootAction();
+        }
+        if (playerInput.reload) {
+          this.startReload();
+        }
+        if (playerInput.switchPrimary) {
+          this.switchWeaponSlot('primary');
+        } else if (playerInput.switchSecondary) {
+          this.switchWeaponSlot('secondary');
+        } else if (playerInput.cycleWeapon) {
+          const nextSlot =
+            this.inventory.equipped.activeSlot === 'primary'
+              ? 'secondary'
+              : this.inventory.equipped.primary
+                ? 'primary'
+                : 'secondary';
+          this.switchWeaponSlot(nextSlot);
+        }
+        if (playerInput.quickHeal) {
+          const med = this.inventory.findBestMedicalItem();
+          if (med) this.useMedicalItem(med.uid);
+        }
+
+        this.isAiming = playerInput.aim;
+        const fireJustPressed = playerInput.fire && !this.prevFireHeld;
+        this.prevFireHeld = playerInput.fire;
+
+        if (fireJustPressed) {
+          this.isFiring = true;
+          this.tryPlayerFire();
+        } else if (!playerInput.fire) {
+          this.isFiring = false;
+        }
+      } else {
+        this.prevFireHeld = false;
+        this.isFiring = false;
+        this.isAiming = false;
+      }
+
       // 1. Player Physics & Movement
       const activeInput =
         this.screen === 'playing'
-          ? this.input
+          ? {
+              moveX: playerInput.moveX,
+              moveY: playerInput.moveY,
+              sprint: playerInput.sprint,
+              crouch: playerInput.crouch,
+              jump: playerInput.jumpHeld || playerInput.jumpPressed,
+            }
           : {
-              forward: false,
-              backward: false,
-              left: false,
-              right: false,
+              moveX: 0,
+              moveY: 0,
               sprint: false,
-              crouch: this.input.crouch,
+              crouch: this.movement.isCrouching,
               jump: false,
             };
 
@@ -929,6 +992,18 @@ export class Game {
     this.audio.playReload();
   }
 
+  private pickupNearestLootAction(): void {
+    const picked = this.inventory.pickupNearestLoot(
+      this.movement.position.x,
+      this.movement.getFeetY(),
+      this.movement.position.z,
+    );
+    if (picked) {
+      this.audio.playPickup();
+      this.emitHudSnapshot();
+    }
+  }
+
   private emitHudSnapshot(): void {
     if (!this.ready) return;
     const playerFeetY = this.movement.getFeetY();
@@ -986,198 +1061,19 @@ export class Game {
       killFeed: [...this.killFeed],
       minimapBlips: blips,
       fps: this.loop ? this.loop.currentFps : 60,
-      pointerLocked: this.pointerLocked,
+      pointerLocked: this.input.isPointerLocked(),
+      inputMode: this.input.getResolvedMode(),
+      inputModeSetting: this.input.getModeSetting(),
+      deviceCapabilities: this.input.getCapabilities(),
       ammoReserves: { ...this.inventory.ammoReserves },
     });
   }
 
-  private clearMovementInputs(): void {
-    this.input.forward = false;
-    this.input.backward = false;
-    this.input.left = false;
-    this.input.right = false;
-    this.input.sprint = false;
-    this.input.jump = false;
-  }
-
-  // Event Handlers
   private onResize = (): void => {
     const w = this.container.clientWidth || window.innerWidth;
     const h = Math.max(1, this.container.clientHeight || window.innerHeight);
     this.cameraCtrl.setAspect(w / h);
     this.renderer.setSize(w, h);
-  };
-
-  private onKeyDown = (e: KeyboardEvent): void => {
-    if (e.code === 'Tab' || e.code === 'KeyI') {
-      if (this.screen === 'playing') {
-        e.preventDefault();
-        this.setScreen('inventory');
-      } else if (this.screen === 'inventory') {
-        e.preventDefault();
-        this.resumePlaying();
-      }
-      return;
-    }
-
-    if (e.code === 'Escape') {
-      if (this.screen === 'playing' || this.screen === 'inventory') {
-        this.setScreen('paused');
-      } else if (this.screen === 'paused') {
-        this.resumePlaying();
-      }
-      return;
-    }
-
-    if (this.screen !== 'playing') return;
-
-    switch (e.code) {
-      case 'KeyW':
-      case 'ArrowUp':
-        this.input.forward = true;
-        break;
-      case 'KeyS':
-      case 'ArrowDown':
-        this.input.backward = true;
-        break;
-      case 'KeyA':
-      case 'ArrowLeft':
-        this.input.left = true;
-        break;
-      case 'KeyD':
-      case 'ArrowRight':
-        this.input.right = true;
-        break;
-      case 'ShiftLeft':
-      case 'ShiftRight':
-        this.input.sprint = true;
-        break;
-      case 'Space':
-        this.input.jump = true;
-        break;
-      case 'KeyC':
-        if (!e.repeat) {
-          this.input.crouch = !this.input.crouch;
-        }
-        break;
-      case 'KeyV':
-        if (!e.repeat) {
-          this.toggleCameraMode();
-        }
-        break;
-      case 'KeyF':
-        if (!e.repeat) {
-          const picked = this.inventory.pickupNearestLoot(
-            this.movement.position.x,
-            this.movement.getFeetY(),
-            this.movement.position.z,
-          );
-          if (picked) {
-            this.audio.playPickup();
-            this.emitHudSnapshot();
-          }
-        }
-        break;
-      case 'KeyR':
-        if (!e.repeat) {
-          this.startReload();
-        }
-        break;
-      case 'Digit1':
-        this.switchWeaponSlot('primary');
-        break;
-      case 'Digit2':
-        this.switchWeaponSlot('secondary');
-        break;
-      case 'Digit3':
-        if (!e.repeat) {
-          const med = this.inventory.findBestMedicalItem();
-          if (med) this.useMedicalItem(med.uid);
-        }
-        break;
-    }
-  };
-
-  private onKeyUp = (e: KeyboardEvent): void => {
-    switch (e.code) {
-      case 'KeyW':
-      case 'ArrowUp':
-        this.input.forward = false;
-        break;
-      case 'KeyS':
-      case 'ArrowDown':
-        this.input.backward = false;
-        break;
-      case 'KeyA':
-      case 'ArrowLeft':
-        this.input.left = false;
-        break;
-      case 'KeyD':
-      case 'ArrowRight':
-        this.input.right = false;
-        break;
-      case 'ShiftLeft':
-      case 'ShiftRight':
-        this.input.sprint = false;
-        break;
-      case 'Space':
-        this.input.jump = false;
-        break;
-    }
-  };
-
-  private onMouseMove = (e: MouseEvent): void => {
-    if (this.screen !== 'playing') return;
-    const fallbackDragLook = !this.pointerLocked && this.pointerLockRejected && (e.buttons & 2) !== 0;
-    if (!this.pointerLocked && !fallbackDragLook) return;
-    this.cameraCtrl.addLookDelta(e.movementX, e.movementY, this.settings.mouseSensitivity);
-  };
-
-  private onMouseDown = (e: MouseEvent): void => {
-    if (this.screen !== 'playing') return;
-    this.audio.unlock();
-    if (!this.pointerLocked) {
-      this.requestPointerLock();
-      if (!this.pointerLockRejected) {
-        return;
-      }
-    }
-    if (e.button === 0) {
-      this.isFiring = true;
-      this.tryPlayerFire();
-    } else if (e.button === 2) {
-      this.isAiming = true;
-    }
-  };
-
-  private onMouseUp = (e: MouseEvent): void => {
-    if (e.button === 0) this.isFiring = false;
-    if (e.button === 2) this.isAiming = false;
-  };
-
-  private onPointerLockChange = (): void => {
-    this.pointerLockPending = false;
-    const wasLocked = this.pointerLocked;
-    this.pointerLocked = document.pointerLockElement === this.renderer.domElement;
-    if (this.pointerLocked) {
-      this.pointerLockRejected = false;
-    } else if (wasLocked) {
-      this.lastPointerLockExitAt = performance.now();
-    }
-    if (!this.pointerLocked && this.screen === 'playing') {
-      this.isFiring = false;
-      this.isAiming = false;
-    }
-    this.emitHudSnapshot();
-  };
-
-  private onPointerLockError = (): void => {
-    this.pointerLockPending = false;
-    this.pointerLockRejected = true;
-  };
-
-  private onContextMenu = (e: MouseEvent): void => {
-    e.preventDefault();
   };
 
   private onContextLost = (e: Event): void => {
@@ -1191,14 +1087,6 @@ export class Game {
 
   private bindEvents(): void {
     window.addEventListener('resize', this.onResize);
-    window.addEventListener('keydown', this.onKeyDown);
-    window.addEventListener('keyup', this.onKeyUp);
-    window.addEventListener('mousemove', this.onMouseMove);
-    this.renderer.domElement.addEventListener('mousedown', this.onMouseDown);
-    window.addEventListener('mouseup', this.onMouseUp);
-    document.addEventListener('pointerlockchange', this.onPointerLockChange);
-    document.addEventListener('pointerlockerror', this.onPointerLockError);
-    this.renderer.domElement.addEventListener('contextmenu', this.onContextMenu);
     this.renderer.domElement.addEventListener('webglcontextlost', this.onContextLost);
     this.renderer.domElement.addEventListener('webglcontextrestored', this.onContextRestored);
   }
@@ -1208,17 +1096,10 @@ export class Game {
     this.loop?.stop();
 
     window.removeEventListener('resize', this.onResize);
-    window.removeEventListener('keydown', this.onKeyDown);
-    window.removeEventListener('keyup', this.onKeyUp);
-    window.removeEventListener('mousemove', this.onMouseMove);
-    this.renderer.domElement.removeEventListener('mousedown', this.onMouseDown);
-    window.removeEventListener('mouseup', this.onMouseUp);
-    document.removeEventListener('pointerlockchange', this.onPointerLockChange);
-    document.removeEventListener('pointerlockerror', this.onPointerLockError);
-    this.renderer.domElement.removeEventListener('contextmenu', this.onContextMenu);
     this.renderer.domElement.removeEventListener('webglcontextlost', this.onContextLost);
     this.renderer.domElement.removeEventListener('webglcontextrestored', this.onContextRestored);
 
+    this.input.dispose();
     this.audio.dispose();
     this.map?.dispose();
     this.inventory?.dispose();

@@ -3,10 +3,8 @@ import { HealthSystem } from '../systems/Health';
 import { ISLAND_PLAYABLE_RADIUS, getTerrainHeight } from '../world/Terrain';
 
 export interface MovementInput {
-  forward: boolean;
-  backward: boolean;
-  left: boolean;
-  right: boolean;
+  moveX: number;
+  moveY: number;
   sprint: boolean;
   crouch: boolean;
   jump: boolean;
@@ -57,14 +55,16 @@ export class MovementController {
       physics.setPlayerCrouchCollider(this.isCrouching);
     }
 
-    const moveZ = (input.forward ? 1 : 0) - (input.backward ? 1 : 0);
-    const moveX = (input.right ? 1 : 0) - (input.left ? 1 : 0);
-    const hasMove = moveX !== 0 || moveZ !== 0;
+    const moveZ = input.moveY;
+    const moveX = input.moveX;
+    const rawMag = Math.hypot(moveX, moveZ);
+    const analogScale = Math.min(1, rawMag);
+    const hasMove = analogScale > 0.04;
 
-    let forwardX = -Math.sin(yaw);
-    let forwardZ = -Math.cos(yaw);
-    let rightX = Math.cos(yaw);
-    let rightZ = -Math.sin(yaw);
+    const forwardX = -Math.sin(yaw);
+    const forwardZ = -Math.cos(yaw);
+    const rightX = Math.cos(yaw);
+    const rightZ = -Math.sin(yaw);
 
     let dirX = forwardX * moveZ + rightX * moveX;
     let dirZ = forwardZ * moveZ + rightZ * moveX;
@@ -83,7 +83,7 @@ export class MovementController {
       this.isSprinting = false;
     }
 
-    const targetSpeed = !hasMove
+    const baseSpeed = !hasMove
       ? 0
       : this.isCrouching
         ? this.crouchSpeed
@@ -91,6 +91,7 @@ export class MovementController {
           ? this.sprintSpeed
           : this.walkSpeed;
 
+    const targetSpeed = baseSpeed * analogScale;
     this.horizontalSpeed = targetSpeed;
 
     if (this.grounded && input.jump && !this.isCrouching && health.consumeJumpStamina()) {

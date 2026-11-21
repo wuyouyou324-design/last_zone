@@ -1,24 +1,49 @@
 import React from 'react';
 import { X } from 'lucide-react';
-import { GameSettings, GraphicsQuality } from '../types/game';
+import {
+  DeviceCapabilities,
+  GameSettings,
+  GraphicsQuality,
+  InputModeSetting,
+  ResolvedInputMode,
+} from '../types/game';
 
 interface SettingsModalProps {
   settings: GameSettings;
+  resolvedInputMode?: ResolvedInputMode;
+  deviceCapabilities?: DeviceCapabilities;
   onChange: (next: GameSettings) => void;
   onClose: () => void;
 }
 
+const INPUT_MODES: Array<{ value: InputModeSetting; label: string }> = [
+  { value: 'auto', label: 'Auto' },
+  { value: 'touch', label: 'Mobile Touch' },
+  { value: 'keyboard-mouse', label: 'Keyboard & Mouse' },
+];
+
 export const SettingsModal: React.FC<SettingsModalProps> = ({
   settings,
+  resolvedInputMode,
+  deviceCapabilities,
   onChange,
   onClose,
 }) => {
   const qualities: GraphicsQuality[] = ['low', 'medium', 'high'];
 
+  const capTags: string[] = [];
+  if (deviceCapabilities) {
+    if (deviceCapabilities.hasTouch) capTags.push('Touchscreen');
+    if (deviceCapabilities.likelyMouse) capTags.push('Mouse');
+    if (deviceCapabilities.likelyKeyboard) capTags.push('Keyboard');
+    if (deviceCapabilities.isHybrid) capTags.push('Hybrid Device');
+    capTags.push(deviceCapabilities.orientation === 'landscape' ? 'Landscape' : 'Portrait');
+  }
+
   return (
-    <div className="fixed inset-0 z-40 flex items-center justify-center bg-[#0A0D11]/85 p-6">
-      <div className="w-full max-w-lg border border-white/12 bg-[#141A22] p-6 md:p-7 shadow-2xl">
-        <div className="flex items-center justify-between border-b border-white/10 pb-4 mb-6">
+    <div className="fixed inset-0 z-40 flex items-start sm:items-center justify-center bg-[#0A0D11]/85 py-4 px-3 sm:p-6 overflow-y-auto touch-pan-y">
+      <div className="my-auto w-full max-w-lg border border-white/12 bg-[#141A22] p-5 sm:p-7 shadow-2xl">
+        <div className="flex items-center justify-between border-b border-white/10 pb-3.5 mb-5">
           <h2 className="font-display text-xl font-bold text-slate-100">Game Settings</h2>
           <button
             type="button"
@@ -30,7 +55,44 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           </button>
         </div>
 
-        <div className="space-y-5 text-sm">
+        <div className="space-y-4 sm:space-y-5 text-sm">
+          {/* Adaptive Control Mode */}
+          <div>
+            <div className="flex items-center justify-between mb-2 gap-2">
+              <span className="text-slate-200 font-medium">Control Mode</span>
+              <span className="text-xs text-amber-400 font-mono-tabular">
+                Active:{' '}
+                {resolvedInputMode === 'touch'
+                  ? 'Touch Controls'
+                  : resolvedInputMode === 'keyboard-mouse'
+                    ? 'Keyboard & Mouse'
+                    : 'Auto'}
+              </span>
+            </div>
+            <div className="grid grid-cols-3 gap-1.5 bg-[#0F1318] p-1 border border-white/10">
+              {INPUT_MODES.map((mode) => (
+                <button
+                  key={mode.value}
+                  type="button"
+                  data-testid={`settings-input-mode-${mode.value}`}
+                  onClick={() => onChange({ ...settings, inputMode: mode.value })}
+                  className={`py-2 px-1 text-xs font-medium transition-colors cursor-pointer whitespace-nowrap ${
+                    settings.inputMode === mode.value
+                      ? 'bg-amber-500 text-slate-950 font-semibold'
+                      : 'text-slate-300 hover:text-white'
+                  }`}
+                >
+                  {mode.label}
+                </button>
+              ))}
+            </div>
+            {capTags.length > 0 && (
+              <p className="mt-1.5 text-[11px] text-slate-400">
+                Detected: {capTags.join(' · ')}
+              </p>
+            )}
+          </div>
+
           {/* Graphics Preset */}
           <div>
             <div className="flex items-center justify-between mb-2">
@@ -62,7 +124,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           </div>
 
           {/* Dynamic Shadows & FPS Display */}
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-2 gap-3 sm:gap-4">
             <label className="flex items-center justify-between border border-white/10 bg-[#0F1318] px-3.5 py-2.5 cursor-pointer">
               <span className="text-slate-200 text-xs font-medium">Dynamic Shadows</span>
               <input
@@ -122,6 +184,27 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             />
           </div>
 
+          {/* Touch Camera Sensitivity */}
+          <div>
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="text-slate-200 font-medium">Touch Look Sensitivity</span>
+              <span className="font-mono-tabular text-xs text-amber-400">
+                {settings.touchSensitivity.toFixed(2)}x
+              </span>
+            </div>
+            <input
+              type="range"
+              min={0.3}
+              max={2.2}
+              step={0.05}
+              value={settings.touchSensitivity}
+              onChange={(e) =>
+                onChange({ ...settings, touchSensitivity: Number(e.target.value) })
+              }
+              className="w-full accent-amber-500 cursor-pointer"
+            />
+          </div>
+
           {/* Master Volume */}
           <div>
             <div className="flex items-center justify-between mb-1.5">
@@ -144,7 +227,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           </div>
         </div>
 
-        <div className="mt-7 flex justify-end border-t border-white/10 pt-4">
+        <div className="mt-6 flex justify-end border-t border-white/10 pt-4">
           <button
             type="button"
             onClick={onClose}
