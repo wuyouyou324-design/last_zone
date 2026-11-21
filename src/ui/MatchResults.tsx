@@ -40,7 +40,7 @@ export const MatchResults: React.FC<MatchResultsProps> = ({
         </h2>
         <p className="mt-1.5 text-sm text-slate-400">
           {summary.victory
-            ? 'You outlasted all opponents on the island.'
+            ? 'You outlasted all opponents in the arena.'
             : `Eliminated by ${summary.eliminatedBy ?? 'hostile fire'}.`}
         </p>
 

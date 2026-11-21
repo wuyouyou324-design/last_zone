@@ -64,6 +64,13 @@ export class MaterialLibrary {
   public readonly lootCrateBody: THREE.MeshStandardMaterial;
   public readonly lootTrimAmber: THREE.MeshStandardMaterial;
   public readonly lootTrimEmerald: THREE.MeshStandardMaterial;
+  public readonly sandstone: THREE.MeshStandardMaterial;
+  public readonly desertSand: THREE.MeshStandardMaterial;
+  public readonly snowGround: THREE.MeshStandardMaterial;
+  public readonly glacierIce: THREE.MeshStandardMaterial;
+  public readonly arcticMetal: THREE.MeshStandardMaterial;
+  public readonly rustSteel: THREE.MeshStandardMaterial;
+  public readonly cactusGreen: THREE.MeshStandardMaterial;
 
   constructor(maxAnisotropy: number) {
     const aniso = Math.min(4, Math.max(1, maxAnisotropy));
@@ -382,6 +389,67 @@ export class MaterialLibrary {
         emissiveIntensity: 0.35,
         roughness: 0.35,
         metalness: 0.5,
+      }),
+    );
+
+    this.sandstone = this.reg(
+      new THREE.MeshStandardMaterial({
+        map: concreteTex,
+        color: 0x9b6447,
+        roughness: 0.92,
+        metalness: 0.03,
+      }),
+    );
+
+    this.desertSand = this.reg(
+      new THREE.MeshStandardMaterial({
+        map: terrainTex,
+        color: 0xb59164,
+        roughness: 0.96,
+        metalness: 0.01,
+      }),
+    );
+
+    this.snowGround = this.reg(
+      new THREE.MeshStandardMaterial({
+        map: terrainTex,
+        color: 0xdbe4ec,
+        roughness: 0.86,
+        metalness: 0.04,
+      }),
+    );
+
+    this.glacierIce = this.reg(
+      new THREE.MeshStandardMaterial({
+        color: 0x89aec7,
+        roughness: 0.28,
+        metalness: 0.12,
+      }),
+    );
+
+    this.arcticMetal = this.reg(
+      new THREE.MeshStandardMaterial({
+        map: concreteTex,
+        color: 0xc8d2db,
+        roughness: 0.5,
+        metalness: 0.36,
+      }),
+    );
+
+    this.rustSteel = this.reg(
+      new THREE.MeshStandardMaterial({
+        map: corrugatedTex,
+        color: 0x7a4b37,
+        roughness: 0.64,
+        metalness: 0.52,
+      }),
+    );
+
+    this.cactusGreen = this.reg(
+      new THREE.MeshStandardMaterial({
+        color: 0xffffff,
+        roughness: 0.84,
+        metalness: 0.02,
       }),
     );
   }

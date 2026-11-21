@@ -1,5 +1,7 @@
 import * as THREE from 'three';
-import { MaterialLibrary } from '../world/Materials';
+import { CharacterAppearanceLibrary, PLAYER_APPEARANCE } from '../character/CharacterAppearance';
+import { CharacterInstance } from '../character/CharacterInstance';
+import { CharacterAssetBundle, CharacterLoader } from '../character/CharacterLoader';
 import {
   WEAPON_ASSEMBLY_META,
   WeaponModelId,
@@ -18,110 +20,85 @@ function toWeaponModelId(id?: string): WeaponModelId {
 export class PlayerAvatar {
   public readonly bodyGroup = new THREE.Group();
   public readonly viewmodelGroup = new THREE.Group();
-  private leftLeg: THREE.Mesh;
-  private rightLeg: THREE.Mesh;
+  public readonly character: CharacterInstance;
+  private fpArms: THREE.Group;
+  private fpLeftArm: THREE.Object3D | null = null;
   private vmWeapons = new Map<WeaponModelId, THREE.Group>();
-  private tpWeapons = new Map<WeaponModelId, THREE.Group>();
   private activeWeaponId: WeaponModelId = 'p9';
   private vmRecoilOffset = 0;
   private stridePhase = 0;
-  private geometries: THREE.BufferGeometry[] = [];
-  private visorMat: THREE.MeshStandardMaterial;
-  private vestMat: THREE.MeshStandardMaterial;
+  private wasGrounded = true;
 
-  constructor(materials: MaterialLibrary, weaponFactory: WeaponModelsFactory) {
-    this.visorMat = new THREE.MeshStandardMaterial({
-      color: 0x1e293b,
-      roughness: 0.2,
-      metalness: 0.8,
-    });
-    this.vestMat = new THREE.MeshStandardMaterial({
-      color: 0x3b483d,
-      roughness: 0.78,
-      metalness: 0.12,
-    });
-
-    // Composite 3rd-person player character (bottom-center pivot at feet)
-    const legGeo = this.reg(new THREE.BoxGeometry(0.22, 0.78, 0.24));
-    legGeo.translate(0, -0.39, 0);
-    this.leftLeg = new THREE.Mesh(legGeo, materials.polymerDark);
-    this.leftLeg.position.set(-0.15, 0.78, 0);
-    this.leftLeg.castShadow = true;
-
-    this.rightLeg = new THREE.Mesh(legGeo, materials.polymerDark);
-    this.rightLeg.position.set(0.15, 0.78, 0);
-    this.rightLeg.castShadow = true;
-
-    const torso = new THREE.Mesh(
-      this.reg(new THREE.BoxGeometry(0.54, 0.66, 0.3)),
-      this.vestMat,
+  constructor(
+    characterBundle: CharacterAssetBundle,
+    loader: CharacterLoader,
+    appearanceLib: CharacterAppearanceLibrary,
+    weaponFactory: WeaponModelsFactory,
+  ) {
+    this.character = new CharacterInstance(
+      characterBundle,
+      (tpl) => loader.instantiate(tpl),
+      appearanceLib,
+      weaponFactory,
+      PLAYER_APPEARANCE,
+      { isPlayer: true, lod0Dist: 200, cullDist: 500 },
     );
-    torso.position.set(0, 1.12, 0);
-    torso.castShadow = true;
+    this.bodyGroup.add(this.character.root);
 
-    const rig = new THREE.Mesh(
-      this.reg(new THREE.BoxGeometry(0.58, 0.34, 0.34)),
-      materials.concreteDark,
-    );
-    rig.position.set(0, 1.14, 0);
-
-    const head = new THREE.Mesh(
-      this.reg(new THREE.BoxGeometry(0.3, 0.32, 0.3)),
-      materials.woodPlank,
-    );
-    head.position.set(0, 1.62, 0);
-    head.castShadow = true;
-
-    const helmet = new THREE.Mesh(
-      this.reg(new THREE.BoxGeometry(0.35, 0.2, 0.35)),
-      materials.gunMetal,
-    );
-    helmet.position.set(0, 1.72, 0);
-    helmet.castShadow = true;
-
-    const visor = new THREE.Mesh(
-      this.reg(new THREE.BoxGeometry(0.26, 0.08, 0.06)),
-      this.visorMat,
-    );
-    visor.position.set(0, 1.63, -0.15);
-
-    this.bodyGroup.add(
-      this.leftLeg,
-      this.rightLeg,
-      torso,
-      rig,
-      head,
-      helmet,
-      visor,
-    );
-
-    // Mount all 4 refined 3D weapons on 3P body & 1P viewmodel (toggled via visibility)
+    // Mount all 4 refined 3D weapons on 1P viewmodel
     for (const id of ALL_WEAPON_IDS) {
       const vm = weaponFactory.createInstance(id, false);
       vm.visible = id === this.activeWeaponId;
       this.viewmodelGroup.add(vm);
       this.vmWeapons.set(id, vm);
-
-      const tp = weaponFactory.createInstance(id, true);
-      tp.scale.setScalar(1.2);
-      tp.position.set(0.36, 1.15, -0.32);
-      tp.rotation.set(-0.04, 0.14, 0);
-      tp.visible = id === this.activeWeaponId;
-      this.bodyGroup.add(tp);
-      this.tpWeapons.set(id, tp);
     }
+
+    // Load 1P tactical sleeves + gloves viewmodel overlay
+    this.fpArms = loader.instantiate(characterBundle.fpArms);
+    appearanceLib.applyToRig(this.fpArms, PLAYER_APPEARANCE);
+    this.fpLeftArm = this.fpArms.getObjectByName('FP_LeftArmGroup') ?? null;
+    this.updateLeftArmForWeapon(this.activeWeaponId);
+    this.viewmodelGroup.add(this.fpArms);
 
     this.bodyGroup.visible = false; // Hidden in 1st-person
     this.viewmodelGroup.position.set(0.23, -0.19, -0.42);
   }
 
-  private reg<T extends THREE.BufferGeometry>(g: T): T {
-    this.geometries.push(g);
-    return g;
+  private updateLeftArmForWeapon(weaponId: WeaponModelId): void {
+    if (!this.fpLeftArm) return;
+    if (weaponId === 'p9') {
+      // Cupping tactical support hand under sidearm grip
+      this.fpLeftArm.position.set(0.015, -0.025, 0.165);
+      this.fpLeftArm.rotation.set(0.08, -0.22, 0.12);
+    } else {
+      // Extending forward to support rifle handguard / pump
+      this.fpLeftArm.position.set(0.0, 0.0, 0.0);
+      this.fpLeftArm.rotation.set(0, 0, 0);
+    }
+  }
+
+  public setArmorEquipment(hasHelmet: boolean, hasVest: boolean): void {
+    this.character.setEquipmentState({
+      helmet: hasHelmet,
+      vest: hasVest,
+    });
   }
 
   public triggerFireKick(): void {
     this.vmRecoilOffset = 0.055;
+  }
+
+  public triggerHitReaction(): void {
+    this.character.animator.triggerHitReaction();
+  }
+
+  public triggerElimination(): void {
+    this.character.animator.triggerElimination();
+  }
+
+  public resetVisualState(): void {
+    this.character.animator.reset();
+    this.wasGrounded = true;
   }
 
   public getMuzzleWorldPosition(out: THREE.Vector3): THREE.Vector3 {
@@ -131,6 +108,10 @@ export class PlayerAvatar {
     return out;
   }
 
+  public getThirdPersonMuzzleWorldPosition(out: THREE.Vector3): boolean {
+    return this.character.equipment.getWeaponMuzzleWorld(out);
+  }
+
   public updateVisuals(
     dt: number,
     movement: MovementController,
@@ -138,6 +119,7 @@ export class PlayerAvatar {
     isAiming: boolean,
     isReloading: boolean,
     weaponId?: string,
+    isEliminated = false,
   ): void {
     const nextId = toWeaponModelId(weaponId);
     if (nextId !== this.activeWeaponId) {
@@ -145,29 +127,51 @@ export class PlayerAvatar {
       for (const id of ALL_WEAPON_IDS) {
         const vm = this.vmWeapons.get(id);
         if (vm) vm.visible = id === nextId;
-        const tp = this.tpWeapons.get(id);
-        if (tp) tp.visible = id === nextId;
       }
+      this.updateLeftArmForWeapon(nextId);
     }
 
     const isThirdPerson = cameraCtrl.mode === 'third-person';
     this.bodyGroup.visible = isThirdPerson;
-    this.viewmodelGroup.visible = !isThirdPerson;
+    this.viewmodelGroup.visible = !isThirdPerson && !isEliminated;
 
     const feetY = movement.getFeetY();
-    this.bodyGroup.position.set(movement.position.x, feetY, movement.position.z);
-    this.bodyGroup.rotation.y = cameraCtrl.yaw;
-    this.bodyGroup.scale.y = movement.isCrouching ? 0.72 : 1.0;
+    const moveSpeed = movement.isMoving
+      ? movement.isSprinting
+        ? 8.2
+        : movement.isCrouching
+          ? 2.8
+          : 5.2
+      : 0;
 
     if (movement.isMoving && movement.grounded) {
       this.stridePhase += dt * (movement.isSprinting ? 12 : 8);
-      const swing = Math.sin(this.stridePhase) * 0.55;
-      this.leftLeg.rotation.x = swing;
-      this.rightLeg.rotation.x = -swing;
-    } else {
-      this.leftLeg.rotation.x = THREE.MathUtils.damp(this.leftLeg.rotation.x, 0, 12, dt);
-      this.rightLeg.rotation.x = THREE.MathUtils.damp(this.rightLeg.rotation.x, 0, 12, dt);
     }
+
+    // Update 3P skeletal character & animation mixer (kept warm at full detail in 3P)
+    if (isThirdPerson || !this.wasGrounded || !movement.grounded || isEliminated) {
+      this.character.update(
+        dt,
+        movement.position.x,
+        feetY,
+        movement.position.z,
+        cameraCtrl.yaw,
+        {
+          isMoving: movement.isMoving,
+          isSprinting: movement.isSprinting,
+          isCrouching: movement.isCrouching,
+          isGrounded: movement.grounded,
+          isAiming,
+          isReloading,
+          isEliminated,
+          moveSpeed,
+          weaponId: this.activeWeaponId,
+        },
+        cameraCtrl.camera.position,
+        true,
+      );
+    }
+    this.wasGrounded = movement.grounded;
 
     if (!isThirdPerson) {
       this.vmRecoilOffset = THREE.MathUtils.damp(this.vmRecoilOffset, 0, 16, dt);
@@ -206,9 +210,6 @@ export class PlayerAvatar {
 
   public dispose(): void {
     this.vmWeapons.clear();
-    this.tpWeapons.clear();
-    this.geometries.forEach((g) => g.dispose());
-    this.visorMat.dispose();
-    this.vestMat.dispose();
+    this.character.dispose();
   }
 }

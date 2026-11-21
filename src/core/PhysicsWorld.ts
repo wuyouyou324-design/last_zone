@@ -24,6 +24,15 @@ export class PhysicsWorld {
     this.world = new RAPIER.World({ x: 0.0, y: -24.0, z: 0.0 });
   }
 
+  public resetWorld(): void {
+    this.botColliders.clear();
+    this.staticColliders.clear();
+    if (this.world) {
+      this.world.free();
+    }
+    this.world = new RAPIER.World({ x: 0.0, y: -24.0, z: 0.0 });
+  }
+
   public buildTerrainHeightfield(
     size: number,
     segments: number,

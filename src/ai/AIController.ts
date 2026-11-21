@@ -33,6 +33,7 @@ export class AIController {
     obstacles: ObstacleBounds[],
     onBotFire: (ev: BotFireEvent) => void,
     onBotZoneEliminated: (bot: BotEntity) => void,
+    heightAt: (x: number, z: number) => number = getTerrainHeight,
   ): void {
     const allActors: CombatantActor[] = [
       playerActor,
@@ -115,25 +116,33 @@ export class AIController {
 
       // Execute FSM state behavior
       let moveSpeed = 0;
+      bot.isAiming = false;
+      bot.isSprinting = false;
       if (bot.state === 'Idle') {
         bot.isMoving = false;
+        bot.moveSpeed = 0;
         bot.yaw += Math.sin(elapsedTotal * 1.4 + bot.stridePhase) * 0.4 * dt;
       } else if (bot.state === 'Explore' || bot.state === 'Search') {
         moveSpeed = bot.state === 'Search' ? 4.8 : 5.4;
-        this.steerToward(bot, bot.targetX, bot.targetZ, moveSpeed, dt, obstacles);
+        bot.moveSpeed = moveSpeed;
+        this.steerToward(bot, bot.targetX, bot.targetZ, moveSpeed, dt, obstacles, heightAt);
         if (Math.hypot(bot.targetX - bot.x, bot.targetZ - bot.z) < 2.2) {
           bot.state = 'Idle';
           bot.stateTimer = 1.1;
+          bot.moveSpeed = 0;
         }
       } else if (bot.state === 'Evade') {
         moveSpeed = 7.4;
-        this.steerToward(bot, bot.targetX, bot.targetZ, moveSpeed, dt, obstacles);
+        bot.moveSpeed = moveSpeed;
+        bot.isSprinting = true;
+        this.steerToward(bot, bot.targetX, bot.targetZ, moveSpeed, dt, obstacles, heightAt);
       } else if (bot.state === 'Alert' && nearestThreat) {
         // Face target & strafe tactically
         const dx = nearestThreat.x - bot.x;
         const dz = nearestThreat.z - bot.z;
         const dist = Math.hypot(dx, dz);
         bot.yaw = Math.atan2(-dx, -dz);
+        bot.isAiming = true;
 
         const strafeSign = Math.sin(elapsedTotal * 1.5 + bot.stridePhase) >= 0 ? 1 : -1;
         const desiredDist = bot.weapon.id === 'sg8' ? 14 : 26;
@@ -142,7 +151,8 @@ export class AIController {
         const dirX = (dx / Math.max(0.1, dist)) * radialDir + (-dz / Math.max(0.1, dist)) * strafeSign * 0.65;
         const dirZ = (dz / Math.max(0.1, dist)) * radialDir + (dx / Math.max(0.1, dist)) * strafeSign * 0.65;
 
-        this.steerToward(bot, bot.x + dirX * 8, bot.z + dirZ * 8, 4.4, dt, obstacles);
+        bot.moveSpeed = 4.4;
+        this.steerToward(bot, bot.x + dirX * 8, bot.z + dirZ * 8, 4.4, dt, obstacles, heightAt);
 
         if (bot.fireCooldown <= 0 && dist <= bot.weapon.range) {
           const interval = Math.max(0.32, 1.15 / Math.min(3.5, bot.weapon.fireRate));
@@ -215,6 +225,7 @@ export class AIController {
     speed: number,
     dt: number,
     obstacles: ObstacleBounds[],
+    heightAt: (x: number, z: number) => number,
   ): void {
     let dx = tx - bot.x;
     let dz = tz - bot.z;
@@ -252,7 +263,7 @@ export class AIController {
       bot.x = nextX;
       bot.z = nextZ;
     }
-    bot.y = Math.max(0.2, getTerrainHeight(bot.x, bot.z));
+    bot.y = Math.max(0.2, heightAt(bot.x, bot.z));
     if (bot.state !== 'Alert') {
       bot.yaw = Math.atan2(-dx, -dz);
     }
@@ -272,10 +283,14 @@ export class AIController {
       dmg = Math.max(2, rawDamage - absorbed);
     }
     bot.health = Math.max(0, bot.health - dmg);
+    bot.hitReactionToken += 1;
     let eliminated = false;
     if (bot.health <= 0) {
       bot.state = 'Eliminated';
       bot.isMoving = false;
+      bot.moveSpeed = 0;
+      bot.isSprinting = false;
+      bot.isAiming = false;
       eliminated = true;
     }
     return { damage: dmg, eliminated };

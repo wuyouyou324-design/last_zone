@@ -2,6 +2,13 @@ import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { AIController, BotFireEvent } from '../ai/AIController';
 import { BotEntity, createBotEntity } from '../ai/Bot';
+import {
+  CharacterAppearanceLibrary,
+  createBotAppearancePreset,
+} from '../character/CharacterAppearance';
+import { CharacterInstance } from '../character/CharacterInstance';
+import { CharacterLODController } from '../character/CharacterLOD';
+import { CharacterAssetBundle, CharacterLoader } from '../character/CharacterLoader';
 import { CameraController } from '../player/Camera';
 import { MovementController, MovementInput } from '../player/Movement';
 import { PlayerAvatar } from '../player/Player';
@@ -14,21 +21,22 @@ import {
   GameSettings,
   HudSnapshot,
   KillFeedEntry,
+  MapId,
   MatchSummary,
   MinimapBlip,
 } from '../types/game';
+import { MAP_CATALOG } from '../world/MapCatalog';
 import { MaterialLibrary } from '../world/Materials';
 import { IslandMap } from '../world/Map';
-import { getTerrainHeight, getZoneAt } from '../world/Terrain';
 import { WeaponModelId, WeaponModelsFactory } from '../weapons/WeaponModels';
 import { AudioSystem } from './AudioSystem';
 import { detectSoftwareWebGL, GameLoop } from './GameLoop';
 import { PhysicsWorld } from './PhysicsWorld';
 
 interface BotVisualRig {
-  group: THREE.Group;
-  leftLeg: THREE.Mesh;
-  rightLeg: THREE.Mesh;
+  character: CharacterInstance;
+  lastHitToken: number;
+  eliminationTriggered: boolean;
 }
 
 const TOTAL_COMBATANTS = 12;
@@ -48,6 +56,9 @@ export class Game {
   private physics = new PhysicsWorld();
   private materials!: MaterialLibrary;
   private weaponFactory!: WeaponModelsFactory;
+  private characterLoader = new CharacterLoader();
+  private characterBundle!: CharacterAssetBundle;
+  private characterAppearance!: CharacterAppearanceLibrary;
   private map!: IslandMap;
   private avatar!: PlayerAvatar;
   private movement = new MovementController();
@@ -59,10 +70,9 @@ export class Game {
   private loop!: GameLoop;
 
   private sunLight!: THREE.DirectionalLight;
+  private hemiLight!: THREE.HemisphereLight;
+  private activeMapId: MapId = 'emerald_island';
   private botRigs = new Map<string, BotVisualRig>();
-  private botGeometries: THREE.BufferGeometry[] = [];
-  private botTorsoMat!: THREE.MeshStandardMaterial;
-  private botHelmetMat!: THREE.MeshStandardMaterial;
   private envRT: THREE.WebGLRenderTarget | null = null;
 
   private screen: GameScreen = 'menu';
@@ -152,9 +162,9 @@ export class Game {
     pmrem.dispose();
 
     // Cool sky / earthy ground hemisphere fill for overcast daylight
-    const hemi = new THREE.HemisphereLight(0xdce6ef, 0x4b5545, 0.88);
-    hemi.position.set(0, 80, 0);
-    this.scene.add(hemi);
+    this.hemiLight = new THREE.HemisphereLight(0xdce6ef, 0x4b5545, 0.88);
+    this.hemiLight.position.set(0, 80, 0);
+    this.scene.add(this.hemiLight);
 
     // Soft overcast directional sunlight
     this.sunLight = new THREE.DirectionalLight(0xf6f8fa, 1.45);
@@ -179,15 +189,34 @@ export class Game {
     this.scene.add(fill);
   }
 
+  private applyMapAtmosphere(mapId: MapId): void {
+    const spec = MAP_CATALOG[mapId];
+    this.scene.background = new THREE.Color(spec.skyColor);
+    const qualityMult =
+      this.settings.quality === 'low' ? 1.35 : this.settings.quality === 'medium' ? 1.05 : 0.88;
+    this.scene.fog = new THREE.FogExp2(spec.fogColor, spec.fogDensityBase * qualityMult);
+    this.hemiLight.color.setHex(spec.hemiSkyColor);
+    this.hemiLight.groundColor.setHex(spec.hemiGroundColor);
+    this.hemiLight.intensity = spec.hemiIntensity;
+    this.sunLight.color.setHex(spec.sunColor);
+    this.sunLight.intensity = spec.sunIntensity;
+  }
+
   private async initAsync(onReady: () => void): Promise<void> {
-    await this.physics.init();
+    const [, charBundle] = await Promise.all([
+      this.physics.init(),
+      this.characterLoader.loadAll(),
+    ]);
     if (this.disposed) return;
 
+    this.characterBundle = charBundle;
     const maxAniso = this.renderer.capabilities.getMaxAnisotropy();
     this.materials = new MaterialLibrary(maxAniso);
     this.weaponFactory = new WeaponModelsFactory(maxAniso);
-    this.map = new IslandMap(this.materials, this.physics);
+    this.characterAppearance = new CharacterAppearanceLibrary(maxAniso);
+    this.map = new IslandMap(this.materials, this.physics, this.activeMapId);
     this.scene.add(this.map.root);
+    this.applyMapAtmosphere(this.activeMapId);
 
     this.inventory = new InventorySystem(this.materials);
     this.scene.add(this.inventory.lootGroup);
@@ -198,22 +227,16 @@ export class Game {
     this.combat = new CombatSystem(this.physics);
     this.scene.add(this.combat.fxGroup);
 
-    this.avatar = new PlayerAvatar(this.materials, this.weaponFactory);
+    this.avatar = new PlayerAvatar(
+      this.characterBundle,
+      this.characterLoader,
+      this.characterAppearance,
+      this.weaponFactory,
+    );
     this.scene.add(this.avatar.bodyGroup);
     this.cameraCtrl.camera.add(this.avatar.viewmodelGroup);
 
-    this.botTorsoMat = new THREE.MeshStandardMaterial({
-      color: 0x475569,
-      roughness: 0.72,
-      metalness: 0.14,
-    });
-    this.botHelmetMat = new THREE.MeshStandardMaterial({
-      color: 0x262c34,
-      roughness: 0.48,
-      metalness: 0.38,
-    });
-
-    this.physics.createPlayerController(0, getTerrainHeight(0, 0) + 1.1, 0);
+    this.physics.createPlayerController(0, this.map.getHeightAt(0, 0) + 1.1, 0);
     this.applySettings(this.settings);
 
     if (!this.isSoftwareGl) {
@@ -227,6 +250,29 @@ export class Game {
     this.loop.start();
     this.emitHudSnapshot();
     onReady();
+  }
+
+  public selectMap(mapId: MapId): void {
+    if (!this.ready || this.disposed || this.activeMapId === mapId) return;
+    this.activeMapId = mapId;
+
+    this.clearBotRigs();
+    this.ai.bots = [];
+    this.inventory.clearWorldLoot();
+
+    if (this.map) {
+      this.scene.remove(this.map.root);
+      this.map.dispose();
+    }
+
+    this.physics.resetWorld();
+    this.map = new IslandMap(this.materials, this.physics, mapId);
+    this.scene.add(this.map.root);
+    this.physics.createPlayerController(0, this.map.getHeightAt(0, 0) + 1.1, 0);
+
+    this.applyMapAtmosphere(mapId);
+    this.map.environment.applyQuality(this.settings.quality);
+    this.emitHudSnapshot();
   }
 
   public getMinimapCanvas(): HTMLCanvasElement | null {
@@ -243,9 +289,13 @@ export class Game {
     this.safeZone.reset();
 
     // Clear old bot rigs
-    this.botRigs.forEach((rig) => this.scene.remove(rig.group));
-    this.botRigs.clear();
+    this.clearBotRigs();
     this.ai.bots = [];
+    this.avatar.resetVisualState();
+    this.avatar.setArmorEquipment(
+      this.inventory.equipped.helmetDurability > 0,
+      this.inventory.equipped.vestDurability > 0,
+    );
 
     const spawns = this.map.generateSpawnPoints(TOTAL_COMBATANTS);
     const playerSpawn = spawns[0];
@@ -277,55 +327,33 @@ export class Game {
     this.emitHudSnapshot();
   }
 
-  private createBotVisualRig(bot: BotEntity): void {
-    const grp = new THREE.Group();
-    grp.position.set(bot.x, bot.y, bot.z);
-
-    const legGeo = this.regBotGeo(new THREE.BoxGeometry(0.22, 0.78, 0.24));
-    legGeo.translate(0, -0.39, 0);
-    const leftLeg = new THREE.Mesh(legGeo, this.materials.polymerDark);
-    leftLeg.position.set(-0.15, 0.78, 0);
-    leftLeg.castShadow = true;
-
-    const rightLeg = new THREE.Mesh(legGeo, this.materials.polymerDark);
-    rightLeg.position.set(0.15, 0.78, 0);
-    rightLeg.castShadow = true;
-
-    const torso = new THREE.Mesh(
-      this.regBotGeo(new THREE.BoxGeometry(0.54, 0.66, 0.3)),
-      this.botTorsoMat,
-    );
-    torso.position.set(0, 1.12, 0);
-    torso.castShadow = true;
-
-    const head = new THREE.Mesh(
-      this.regBotGeo(new THREE.BoxGeometry(0.3, 0.32, 0.3)),
-      this.materials.woodPlank,
-    );
-    head.position.set(0, 1.62, 0);
-    head.castShadow = true;
-
-    const helmet = new THREE.Mesh(
-      this.regBotGeo(new THREE.BoxGeometry(0.36, 0.21, 0.36)),
-      this.botHelmetMat,
-    );
-    helmet.position.set(0, 1.72, 0);
-    helmet.castShadow = true;
-
-    const wId = bot.weapon.id as WeaponModelId;
-    const rifle = this.weaponFactory.createInstance(wId, true);
-    rifle.scale.setScalar(1.2);
-    rifle.position.set(0.36, 1.15, -0.32);
-    rifle.rotation.set(-0.04, 0.14, 0);
-
-    grp.add(leftLeg, rightLeg, torso, head, helmet, rifle);
-    this.scene.add(grp);
-    this.botRigs.set(bot.id, { group: grp, leftLeg, rightLeg });
+  private clearBotRigs(): void {
+    this.botRigs.forEach((rig) => {
+      this.scene.remove(rig.character.root);
+      rig.character.dispose();
+    });
+    this.botRigs.clear();
   }
 
-  private regBotGeo<T extends THREE.BufferGeometry>(g: T): T {
-    this.botGeometries.push(g);
-    return g;
+  private createBotVisualRig(bot: BotEntity): void {
+    const appearance = createBotAppearancePreset(bot.variantIndex);
+    const character = new CharacterInstance(
+      this.characterBundle,
+      (tpl) => this.characterLoader.instantiate(tpl),
+      this.characterAppearance,
+      this.weaponFactory,
+      appearance,
+      { isPlayer: false, lod0Dist: 34, cullDist: 120 },
+    );
+    character.equipment.setActiveWeapon(bot.weapon.id as WeaponModelId);
+    character.root.position.set(bot.x, bot.y, bot.z);
+    character.root.rotation.y = bot.yaw;
+    this.scene.add(character.root);
+    this.botRigs.set(bot.id, {
+      character,
+      lastHitToken: bot.hitReactionToken,
+      eliminationTriggered: false,
+    });
   }
 
   public setScreen(next: GameScreen): void {
@@ -406,10 +434,11 @@ export class Game {
     this.renderer.shadowMap.enabled = shadowsActive;
     this.sunLight.castShadow = shadowsActive;
 
-    const fogDensity =
-      next.quality === 'low' ? 0.0072 : next.quality === 'medium' ? 0.0056 : 0.0046;
+    const spec = MAP_CATALOG[this.activeMapId];
+    const qualityMult =
+      next.quality === 'low' ? 1.35 : next.quality === 'medium' ? 1.05 : 0.88;
     if (this.scene.fog instanceof THREE.FogExp2) {
-      this.scene.fog.density = fogDensity;
+      this.scene.fog.density = spec.fogDensityBase * qualityMult;
     }
 
     if (this.map) {
@@ -501,10 +530,18 @@ export class Game {
               jump: false,
             };
 
-      this.movement.update(dt, this.cameraCtrl.yaw, activeInput, this.physics, this.health);
+      const mapHeightAt = (x: number, z: number) => this.map.getHeightAt(x, z);
+      this.movement.update(
+        dt,
+        this.cameraCtrl.yaw,
+        activeInput,
+        this.physics,
+        this.health,
+        mapHeightAt,
+      );
 
       if (this.movement.isMoving && this.movement.grounded) {
-        const zone = getZoneAt(this.movement.position.x, this.movement.position.z);
+        const zone = this.map.getZoneAt(this.movement.position.x, this.movement.position.z);
         this.audio.playFootstep(
           this.movement.isSprinting,
           zone === 'urban' || zone === 'industrial',
@@ -573,6 +610,7 @@ export class Game {
         this.map.getObstacles(),
         (ev) => this.handleBotFire(ev),
         (bot) => this.handleBotEliminated(bot, 'Safe Zone', 'Storm'),
+        mapHeightAt,
       );
 
       this.syncBotVisuals(dt);
@@ -595,6 +633,11 @@ export class Game {
         this.physics.playerCollider.handle,
       );
 
+      this.avatar.setArmorEquipment(
+        this.inventory.equipped.helmetDurability > 0,
+        this.inventory.equipped.vestDurability > 0,
+      );
+
       this.avatar.updateVisuals(
         dt,
         this.movement,
@@ -602,6 +645,7 @@ export class Game {
         this.isAiming,
         this.reloadTimer !== null,
         activeWeapon?.id,
+        this.health.eliminated,
       );
 
       // Keep shadow frustum centered near player for crisp shadows
@@ -660,7 +704,7 @@ export class Game {
 
     if (this.cameraCtrl.mode === 'first-person') {
       this.avatar.getMuzzleWorldPosition(_muzzlePos);
-    } else {
+    } else if (!this.avatar.getThirdPersonMuzzleWorldPosition(_muzzlePos)) {
       _muzzlePos.set(
         this.movement.position.x,
         this.movement.getFeetY() + 1.35,
@@ -727,7 +771,10 @@ export class Game {
     this.gunfireBlips.push({ x: ev.bot.x, z: ev.bot.z, timeLeft: 2.2 });
 
     _botOrigin.set(ev.bot.x, ev.bot.y + 1.45, ev.bot.z);
-    _botMuzzle.set(ev.bot.x, ev.bot.y + 1.32, ev.bot.z);
+    const botRig = this.botRigs.get(ev.bot.id);
+    if (!botRig || !botRig.character.equipment.getWeaponMuzzleWorld(_botMuzzle)) {
+      _botMuzzle.set(ev.bot.x, ev.bot.y + 1.32, ev.bot.z);
+    }
     _botDir
       .set(ev.target.x - ev.bot.x, ev.target.y + 1.2 - (ev.bot.y + 1.45), ev.target.z - ev.bot.z)
       .normalize();
@@ -740,6 +787,7 @@ export class Game {
       this.health.applyDamage(ev.damage, ev.isHeadshot, this.inventory.equipped, false);
       this.damageFlashAlpha = 0.85;
       this.audio.playDamageTaken();
+      this.avatar.triggerHitReaction();
       if (this.health.eliminated) {
         this.handlePlayerEliminated(`${ev.bot.name} (${ev.bot.weapon.name})`);
       }
@@ -756,9 +804,9 @@ export class Game {
 
   private handleBotEliminated(bot: BotEntity, killerName: string, weaponName: string): void {
     const rig = this.botRigs.get(bot.id);
-    if (rig) {
-      rig.group.rotation.x = -Math.PI * 0.48;
-      rig.group.position.y = bot.y + 0.18;
+    if (rig && !rig.eliminationTriggered) {
+      rig.eliminationTriggered = true;
+      rig.character.animator.triggerElimination();
     }
 
     this.pushKillFeed(killerName, bot.name, weaponName);
@@ -782,6 +830,7 @@ export class Game {
 
   private handlePlayerEliminated(by: string): void {
     this.eliminatedBy = by;
+    this.avatar.triggerElimination();
     this.pushKillFeed(by, 'You', '');
     this.finishMatch(false);
   }
@@ -818,21 +867,45 @@ export class Game {
   }
 
   private syncBotVisuals(dt: number): void {
+    this.cameraCtrl.camera.updateMatrixWorld();
+    CharacterLODController.updateCameraFrustum(this.cameraCtrl.camera);
+    const camPos = this.cameraCtrl.camera.position;
+
     for (const bot of this.ai.bots) {
       const rig = this.botRigs.get(bot.id);
       if (!rig) continue;
-      if (bot.state === 'Eliminated') continue;
 
-      rig.group.position.set(bot.x, bot.y, bot.z);
-      rig.group.rotation.y = bot.yaw;
-      if (bot.isMoving) {
-        const swing = Math.sin(bot.stridePhase) * 0.52;
-        rig.leftLeg.rotation.x = swing;
-        rig.rightLeg.rotation.x = -swing;
-      } else {
-        rig.leftLeg.rotation.x = THREE.MathUtils.damp(rig.leftLeg.rotation.x, 0, 10, dt);
-        rig.rightLeg.rotation.x = THREE.MathUtils.damp(rig.rightLeg.rotation.x, 0, 10, dt);
+      if (bot.hitReactionToken !== rig.lastHitToken) {
+        rig.lastHitToken = bot.hitReactionToken;
+        if (bot.state !== 'Eliminated') {
+          rig.character.animator.triggerHitReaction();
+        }
       }
+
+      if (bot.state === 'Eliminated' && !rig.eliminationTriggered) {
+        rig.eliminationTriggered = true;
+        rig.character.animator.triggerElimination();
+      }
+
+      rig.character.update(
+        dt,
+        bot.x,
+        bot.y,
+        bot.z,
+        bot.yaw,
+        {
+          isMoving: bot.isMoving,
+          isSprinting: bot.isSprinting,
+          isCrouching: false,
+          isGrounded: true,
+          isAiming: bot.isAiming,
+          isReloading: false,
+          isEliminated: bot.state === 'Eliminated',
+          moveSpeed: bot.moveSpeed,
+          weaponId: bot.weapon.id as WeaponModelId,
+        },
+        camPos,
+      );
     }
   }
 
@@ -867,8 +940,13 @@ export class Game {
       alpha: Math.min(1, b.timeLeft / 2.2),
     }));
 
+    const currentZone = this.map.getZoneAt(this.movement.position.x, this.movement.position.z);
+    const mapSpec = MAP_CATALOG[this.activeMapId];
+
     this.onHudUpdate({
       screen: this.screen,
+      mapId: this.activeMapId,
+      mapName: mapSpec.name,
       health: this.health.health,
       maxHealth: this.health.maxHealth,
       stamina: this.health.stamina,
@@ -881,7 +959,8 @@ export class Game {
       playerY: playerFeetY,
       playerZ: this.movement.position.z,
       playerYawDeg: yawDeg,
-      currentZone: getZoneAt(this.movement.position.x, this.movement.position.z),
+      currentZone,
+      zoneName: mapSpec.zoneNames[currentZone],
       aliveCount: this.countAliveBots() + (this.health.eliminated ? 0 : 1),
       totalCombatants: TOTAL_COMBATANTS,
       kills: this.kills,
@@ -1145,12 +1224,12 @@ export class Game {
     this.inventory?.dispose();
     this.safeZone?.dispose();
     this.combat?.dispose();
+    this.clearBotRigs();
     this.avatar?.dispose();
     this.weaponFactory?.dispose();
+    this.characterAppearance?.dispose();
+    this.characterLoader.dispose();
     this.materials?.dispose();
-    this.botGeometries.forEach((g) => g.dispose());
-    this.botTorsoMat?.dispose();
-    this.botHelmetMat?.dispose();
     this.envRT?.dispose();
     this.physics.dispose();
     this.renderer.dispose();

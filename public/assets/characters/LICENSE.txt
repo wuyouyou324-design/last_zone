@@ -1,0 +1,11 @@
+LAST ZONE — Character Asset Inventory & License
+===================================================
+
+Assets in /public/assets/characters/:
+1. tactical_operator_lod0.glb — High-detail semi-realistic tactical humanoid operator (LOD0, 20-bone skeleton, 10 SkinnedMesh components, 9 skeletal AnimationClips)
+2. tactical_operator_lod1.glb — Reduced-poly distant tactical humanoid operator (LOD1, identical 20-bone skeleton & slots)
+3. fp_tactical_arms.glb — First-person tactical forearm sleeves & gloved hands viewmodel overlay
+
+License:
+CC0 1.0 Universal (Project-Original procedural assets generated via scripts/generate-character-glbs.mjs for LAST ZONE).
+Free for commercial and non-commercial use without attribution constraints.

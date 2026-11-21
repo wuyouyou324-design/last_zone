@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Game } from './core/Game';
-import { GameSettings, HudSnapshot, MatchSummary } from './types/game';
+import { GameSettings, HudSnapshot, MapId, MatchSummary } from './types/game';
 import { HUD } from './ui/HUD';
 import { InventoryModal } from './ui/InventoryModal';
 import { MainMenu } from './ui/MainMenu';
@@ -51,6 +51,7 @@ export default function App() {
   const gameRef = useRef<Game | null>(null);
 
   const [settings, setSettings] = useState<GameSettings>(() => loadSettings());
+  const [selectedMapId, setSelectedMapId] = useState<MapId>('emerald_island');
   const [ready, setReady] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [hud, setHud] = useState<HudSnapshot | null>(null);
@@ -87,6 +88,11 @@ export default function App() {
     gameRef.current?.applySettings(next);
   };
 
+  const handleSelectMap = (mapId: MapId) => {
+    setSelectedMapId(mapId);
+    gameRef.current?.selectMap(mapId);
+  };
+
   const handleStartMatch = () => {
     setMatchSummary(null);
     setSettingsOpen(false);
@@ -116,6 +122,8 @@ export default function App() {
       {currentScreen === 'menu' && (
         <MainMenu
           ready={ready}
+          selectedMapId={selectedMapId}
+          onSelectMap={handleSelectMap}
           onStartMatch={handleStartMatch}
           onOpenSettings={() => setSettingsOpen(true)}
         />

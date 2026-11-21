@@ -47,6 +47,7 @@ export class MovementController {
     input: MovementInput,
     physics: PhysicsWorld,
     health: HealthSystem,
+    heightAt: (x: number, z: number) => number = getTerrainHeight,
   ): void {
     if (health.eliminated) return;
 
@@ -119,13 +120,13 @@ export class MovementController {
       const scale = ISLAND_PLAYABLE_RADIUS / r;
       this.position.x *= scale;
       this.position.z *= scale;
-      const minY = getTerrainHeight(this.position.x, this.position.z) + 0.95;
+      const minY = heightAt(this.position.x, this.position.z) + 0.95;
       this.position.y = Math.max(this.position.y, minY);
       physics.teleportPlayer(this.position.x, this.position.y, this.position.z);
     }
 
     // Safety floor clamp in case of extreme frame spike
-    const groundY = getTerrainHeight(this.position.x, this.position.z);
+    const groundY = heightAt(this.position.x, this.position.z);
     const minCenterY = groundY + (this.isCrouching ? 0.65 : 0.9);
     if (this.position.y < minCenterY - 0.35) {
       this.position.y = minCenterY;

@@ -528,7 +528,7 @@ export class InventorySystem {
     this.spawnWorldLoot(removed, px + 0.8, py, pz + 0.8);
   }
 
-  private clearWorldLoot(): void {
+  public clearWorldLoot(): void {
     for (const node of this.lootNodes) {
       this.lootGroup.remove(node.mesh);
     }

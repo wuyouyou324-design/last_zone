@@ -154,8 +154,8 @@ export const HUD: React.FC<HUDProps> = ({
       {/* Top-Left: Kill Feed & Zone Location */}
       <div className="fixed top-4 left-4 flex flex-col gap-2 max-w-xs">
         <div className="bg-[#0F1318]/85 border border-white/10 px-3 py-1.5 text-xs text-slate-300 flex items-center gap-2">
-          <span className="capitalize font-semibold text-slate-100">
-            {hud.currentZone} Zone
+          <span className="font-semibold text-slate-100">
+            {hud.zoneName}
           </span>
           <span className="text-slate-500">·</span>
           <span className="font-mono-tabular text-slate-400">
@@ -370,7 +370,7 @@ export const HUD: React.FC<HUDProps> = ({
       <div className="fixed bottom-4 left-4 bg-[#0F1318]/90 border border-white/12 p-1.5">
         <canvas ref={minimapRef} width={164} height={164} className="block w-40 h-40" />
         <div className="mt-1 flex items-center justify-between px-1 text-[10px] text-slate-400">
-          <span>Island Radar</span>
+          <span className="truncate max-w-[105px]">{hud.mapName}</span>
           <span className="font-mono-tabular text-sky-400">
             R {Math.round(hud.safeZone.currentRadius)}m
           </span>

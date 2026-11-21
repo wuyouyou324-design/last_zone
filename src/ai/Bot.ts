@@ -21,6 +21,11 @@ export interface BotEntity {
   healCooldown: number;
   stridePhase: number;
   isMoving: boolean;
+  moveSpeed: number;
+  isSprinting: boolean;
+  isAiming: boolean;
+  hitReactionToken: number;
+  variantIndex: number;
   lastFiredAt: number;
   colliderHandle: number;
 }
@@ -69,6 +74,11 @@ export function createBotEntity(
     healCooldown: 0,
     stridePhase: Math.random() * 6,
     isMoving: false,
+    moveSpeed: 0,
+    isSprinting: false,
+    isAiming: false,
+    hitReactionToken: 0,
+    variantIndex: index,
     lastFiredAt: -10,
     colliderHandle,
   };

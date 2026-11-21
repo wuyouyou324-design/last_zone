@@ -4,6 +4,8 @@ export type CameraMode = 'first-person' | 'third-person';
 
 export type GraphicsQuality = 'low' | 'medium' | 'high';
 
+export type MapId = 'emerald_island' | 'arid_canyon' | 'frost_ridge';
+
 export type BiomeZone = 'urban' | 'forest' | 'mountain' | 'industrial';
 
 export type BotState = 'Idle' | 'Explore' | 'Search' | 'Alert' | 'Evade' | 'Eliminated';
@@ -114,6 +116,8 @@ export interface ReloadState {
 
 export interface HudSnapshot {
   screen: GameScreen;
+  mapId: MapId;
+  mapName: string;
   health: number;
   maxHealth: number;
   stamina: number;
@@ -127,6 +131,7 @@ export interface HudSnapshot {
   playerZ: number;
   playerYawDeg: number; // 0 = North (-Z)
   currentZone: BiomeZone;
+  zoneName: string;
   aliveCount: number;
   totalCombatants: number;
   kills: number;
