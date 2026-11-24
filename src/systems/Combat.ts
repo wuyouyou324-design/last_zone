@@ -14,6 +14,7 @@ export interface CombatTarget {
 
 export interface ShotOutcome {
   hitTargetId: string | null;
+  hitVehicleId?: string | null;
   isHeadshot: boolean;
   damage: number;
   hitPoint: THREE.Vector3;
@@ -108,7 +109,7 @@ export class CombatSystem {
         .addScaledVector(_camUp, ry)
         .normalize();
 
-      // 1. World geometry / terrain / building occlusion raycast via Rapier
+      // 1. World geometry / terrain / building / vehicle occlusion raycast via Rapier
       const worldHit = this.physics.castWorldRay(
         origin.x,
         origin.y,
@@ -117,6 +118,7 @@ export class CombatSystem {
         _dir.y,
         _dir.z,
         weapon.range,
+        true,
       );
       void excludeColliderHandle;
 
@@ -128,9 +130,12 @@ export class CombatSystem {
       );
 
       let hitTargetId: string | null = null;
+      let hitVehicleId: string | null = worldHit
+        ? this.physics.getVehicleIdByColliderHandle(worldHit.colliderHandle)
+        : null;
       let isHeadshot = false;
 
-      // 2. Analytic ray-capsule check against active combatants closer than world wall
+      // 2. Analytic ray-capsule check against active combatants closer than world wall/vehicle
       for (const target of targets) {
         if (!target.alive) continue;
         const hitInfo = this.intersectTargetCylinder(origin, _dir, target, bestDist);
@@ -142,6 +147,7 @@ export class CombatSystem {
             origin.z + _dir.z * bestDist,
           );
           hitTargetId = target.id;
+          hitVehicleId = null;
           isHeadshot = hitInfo.headshot;
         }
       }
@@ -154,8 +160,13 @@ export class CombatSystem {
       const dmgMultiplier = isHeadshot ? 1.65 : 1.0;
       outcomes.push({
         hitTargetId,
+        hitVehicleId,
         isHeadshot,
-        damage: hitTargetId ? Math.round(weapon.damage * dmgMultiplier) : 0,
+        damage: hitTargetId
+          ? Math.round(weapon.damage * dmgMultiplier)
+          : hitVehicleId
+            ? Math.round(weapon.damage * 1.15)
+            : 0,
         hitPoint: _hitPt.clone(),
       });
     }

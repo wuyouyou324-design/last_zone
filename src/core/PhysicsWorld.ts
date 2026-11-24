@@ -14,7 +14,10 @@ export class PhysicsWorld {
   public playerCollider!: RAPIER.Collider;
   public characterController!: RAPIER.KinematicCharacterController;
   private botColliders = new Map<number, string>();
+  private vehicleColliders = new Map<number, string>();
   private staticColliders = new Set<number>();
+  private terrainColliderHandle: number | null = null;
+  private vehicleController: RAPIER.KinematicCharacterController | null = null;
 
   public async init(): Promise<void> {
     if (!PhysicsWorld.rapierInitialized) {
@@ -22,15 +25,28 @@ export class PhysicsWorld {
       PhysicsWorld.rapierInitialized = true;
     }
     this.world = new RAPIER.World({ x: 0.0, y: -24.0, z: 0.0 });
+    this.createVehicleSweepController();
+  }
+
+  private createVehicleSweepController(): void {
+    const ctrl = this.world.createCharacterController(0.06);
+    ctrl.disableAutostep();
+    ctrl.disableSnapToGround();
+    ctrl.setApplyImpulsesToDynamicBodies(false);
+    this.vehicleController = ctrl;
   }
 
   public resetWorld(): void {
     this.botColliders.clear();
+    this.vehicleColliders.clear();
     this.staticColliders.clear();
+    this.terrainColliderHandle = null;
+    this.vehicleController = null;
     if (this.world) {
       this.world.free();
     }
     this.world = new RAPIER.World({ x: 0.0, y: -24.0, z: 0.0 });
+    this.createVehicleSweepController();
   }
 
   public buildTerrainHeightfield(
@@ -62,6 +78,7 @@ export class PhysicsWorld {
       new RAPIER.Vector3(size, 1.0, size),
     );
     const collider = this.world.createCollider(colliderDesc, body);
+    this.terrainColliderHandle = collider.handle;
     this.staticColliders.add(collider.handle);
   }
 
@@ -153,9 +170,116 @@ export class PhysicsWorld {
     };
   }
 
+  public stepWorld(): void {
+    this.world.step();
+  }
+
   public teleportPlayer(x: number, y: number, z: number): void {
     this.playerBody.setTranslation({ x, y, z }, true);
     this.playerBody.setNextKinematicTranslation({ x, y, z });
+  }
+
+  public registerVehicleCollider(
+    vehicleId: string,
+    x: number,
+    y: number,
+    z: number,
+    hx: number,
+    hy: number,
+    hz: number,
+    yaw: number,
+  ): { body: RAPIER.RigidBody; collider: RAPIER.Collider } {
+    const halfYaw = yaw * 0.5;
+    const bodyDesc = RAPIER.RigidBodyDesc.kinematicPositionBased()
+      .setTranslation(x, y, z)
+      .setRotation({ x: 0, y: Math.sin(halfYaw), z: 0, w: Math.cos(halfYaw) });
+    const body = this.world.createRigidBody(bodyDesc);
+    const colliderDesc = RAPIER.ColliderDesc.cuboid(hx, hy, hz);
+    const collider = this.world.createCollider(colliderDesc, body);
+    this.vehicleColliders.set(collider.handle, vehicleId);
+    return { body, collider };
+  }
+
+  public unregisterVehicleCollider(collider: RAPIER.Collider, body: RAPIER.RigidBody): void {
+    this.vehicleColliders.delete(collider.handle);
+    if (this.world.getRigidBody(body.handle)) {
+      this.world.removeRigidBody(body);
+    }
+  }
+
+  public getVehicleIdByColliderHandle(handle: number): string | null {
+    return this.vehicleColliders.get(handle) ?? null;
+  }
+
+  public moveVehicleCollider(
+    collider: RAPIER.Collider,
+    body: RAPIER.RigidBody,
+    desiredDx: number,
+    targetCenterY: number,
+    desiredDz: number,
+    yaw: number,
+    excludePlayer = true,
+  ): { x: number; y: number; z: number; blocked: boolean; hitVehicleId: string | null } {
+    const pos = body.translation();
+    let nextX = pos.x + desiredDx;
+    let nextZ = pos.z + desiredDz;
+    let blocked = false;
+    let hitVehicleId: string | null = null;
+
+    if (this.vehicleController && (Math.abs(desiredDx) > 1e-5 || Math.abs(desiredDz) > 1e-5)) {
+      const playerHandle = excludePlayer ? this.playerCollider?.handle : undefined;
+      this.vehicleController.computeColliderMovement(
+        collider,
+        { x: desiredDx, y: 0, z: desiredDz },
+        undefined,
+        undefined,
+        (other) => {
+          if (other.handle === collider.handle) return false;
+          if (other.handle === this.terrainColliderHandle) return false;
+          if (playerHandle !== undefined && other.handle === playerHandle) return false;
+          return true;
+        },
+      );
+      const corrected = this.vehicleController.computedMovement();
+      nextX = pos.x + corrected.x;
+      nextZ = pos.z + corrected.z;
+
+      const numCols = this.vehicleController.numComputedCollisions();
+      for (let i = 0; i < numCols; i++) {
+        const col = this.vehicleController.computedCollision(i);
+        if (col?.collider) {
+          blocked = true;
+          const vId = this.vehicleColliders.get(col.collider.handle);
+          if (vId) hitVehicleId = vId;
+        }
+      }
+
+      const desiredMag = Math.hypot(desiredDx, desiredDz);
+      const actualMag = Math.hypot(corrected.x, corrected.z);
+      if (desiredMag > 0.004 && actualMag < desiredMag * 0.72) {
+        blocked = true;
+      }
+    }
+
+    const halfYaw = yaw * 0.5;
+    body.setNextKinematicTranslation({ x: nextX, y: targetCenterY, z: nextZ });
+    body.setNextKinematicRotation({ x: 0, y: Math.sin(halfYaw), z: 0, w: Math.cos(halfYaw) });
+
+    return { x: nextX, y: targetCenterY, z: nextZ, blocked, hitVehicleId };
+  }
+
+  public syncVehicleTransform(
+    body: RAPIER.RigidBody,
+    x: number,
+    y: number,
+    z: number,
+    yaw: number,
+  ): void {
+    const halfYaw = yaw * 0.5;
+    body.setTranslation({ x, y, z }, true);
+    body.setRotation({ x: 0, y: Math.sin(halfYaw), z: 0, w: Math.cos(halfYaw) }, true);
+    body.setNextKinematicTranslation({ x, y, z });
+    body.setNextKinematicRotation({ x: 0, y: Math.sin(halfYaw), z: 0, w: Math.cos(halfYaw) });
   }
 
   public registerBotCollider(
@@ -190,6 +314,7 @@ export class PhysicsWorld {
     dz: number,
     maxToi: number,
     excludeColliderHandle?: number,
+    excludeColliderHandle2?: number,
   ): RayHitResult | null {
     const ray = new RAPIER.Ray({ x: ox, y: oy, z: oz }, { x: dx, y: dy, z: dz });
     const hit = this.world.castRayAndGetNormal(
@@ -198,9 +323,17 @@ export class PhysicsWorld {
       true,
       undefined,
       undefined,
-      excludeColliderHandle !== undefined
-        ? this.world.getCollider(excludeColliderHandle) ?? undefined
-        : undefined,
+      undefined,
+      undefined,
+      (collider) => {
+        if (excludeColliderHandle !== undefined && collider.handle === excludeColliderHandle) {
+          return false;
+        }
+        if (excludeColliderHandle2 !== undefined && collider.handle === excludeColliderHandle2) {
+          return false;
+        }
+        return true;
+      },
     );
     if (!hit) return null;
     const pt = ray.pointAt(hit.timeOfImpact);
@@ -220,6 +353,7 @@ export class PhysicsWorld {
     dy: number,
     dz: number,
     maxToi: number,
+    includeVehicles = false,
   ): RayHitResult | null {
     const ray = new RAPIER.Ray({ x: ox, y: oy, z: oz }, { x: dx, y: dy, z: dz });
     const hit = this.world.castRayAndGetNormal(
@@ -230,7 +364,9 @@ export class PhysicsWorld {
       undefined,
       undefined,
       undefined,
-      (collider) => this.staticColliders.has(collider.handle),
+      (collider) =>
+        this.staticColliders.has(collider.handle) ||
+        (includeVehicles && this.vehicleColliders.has(collider.handle)),
     );
     if (!hit) return null;
     const pt = ray.pointAt(hit.timeOfImpact);
@@ -244,7 +380,10 @@ export class PhysicsWorld {
 
   public dispose(): void {
     this.botColliders.clear();
+    this.vehicleColliders.clear();
     this.staticColliders.clear();
+    this.terrainColliderHandle = null;
+    this.vehicleController = null;
     if (this.world) {
       this.world.free();
     }

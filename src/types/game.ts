@@ -105,10 +105,36 @@ export interface SafeZoneSnapshot {
   playerOutside: boolean;
 }
 
+export type VehicleType = 'sedan' | 'suv' | 'pickup' | 'truck';
+
+export interface VehiclePrompt {
+  id: string;
+  name: string;
+  type: VehicleType;
+  occupied: boolean;
+  disabled: boolean;
+}
+
+export interface VehicleHudState {
+  id: string;
+  name: string;
+  type: VehicleType;
+  speedKmh: number;
+  maxSpeedKmh: number;
+  gear: 'R' | 'N' | '1' | '2' | '3' | '4' | '5';
+  fuel: number;
+  maxFuel: number;
+  health: number;
+  maxHealth: number;
+  surface: 'road' | 'offroad' | 'sand' | 'snow' | 'shallow_water';
+  handbrake: boolean;
+  cameraZoomIndex: number;
+}
+
 export interface MinimapBlip {
   x: number;
   z: number;
-  kind: 'gunfire' | 'loot';
+  kind: 'gunfire' | 'loot' | 'vehicle';
   alpha: number;
 }
 
@@ -164,6 +190,8 @@ export interface HudSnapshot {
   inventory: InventoryItem[];
   safeZone: SafeZoneSnapshot;
   lootPrompt: LootPrompt | null;
+  vehiclePrompt: VehiclePrompt | null;
+  activeVehicle: VehicleHudState | null;
   healing: HealingState | null;
   reloading: ReloadState | null;
   hitMarkerAlpha: number;

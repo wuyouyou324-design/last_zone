@@ -7,19 +7,25 @@ const _desiredCamPos = new THREE.Vector3();
 const _rayDir = new THREE.Vector3();
 const _lookTarget = new THREE.Vector3();
 
+const DRIVING_ZOOM_SCALES = [0.82, 1.0, 1.28] as const;
+
 export class CameraController {
   public readonly camera: THREE.PerspectiveCamera;
   public mode: CameraMode = 'first-person';
   public yaw = 0;
   public pitch = 0;
+  public drivingZoomIndex = 1;
 
   private baseFov = 78;
   private currentFov = 78;
   private currentEyeOffset = 1.62;
   private currentBackDist = 0;
   private currentRightOffset = 0;
+  private currentDrivingDist = 6.5;
   private recoilPitch = 0;
   private recoilYaw = 0;
+  private shakeIntensity = 0;
+  private timeSinceManualLook = 10;
 
   constructor(aspect: number) {
     this.camera = new THREE.PerspectiveCamera(this.baseFov, aspect, 0.1, 450);
@@ -39,15 +45,32 @@ export class CameraController {
     return this.mode;
   }
 
+  public cycleDrivingZoom(): number {
+    this.drivingZoomIndex = (this.drivingZoomIndex + 1) % DRIVING_ZOOM_SCALES.length;
+    return this.drivingZoomIndex;
+  }
+
+  public resetDrivingFollow(): void {
+    this.timeSinceManualLook = 2.5;
+    this.pitch = -0.14;
+  }
+
   public addLookDelta(dx: number, dy: number, sensitivity: number): void {
     const scale = 0.0021 * sensitivity;
     this.yaw -= dx * scale;
     this.pitch = THREE.MathUtils.clamp(this.pitch - dy * scale, -1.32, 1.32);
+    if (Math.abs(dx) > 0.2 || Math.abs(dy) > 0.2) {
+      this.timeSinceManualLook = 0;
+    }
   }
 
   public addRecoil(amount: number): void {
     this.recoilPitch = Math.min(0.18, this.recoilPitch + amount);
     this.recoilYaw += (Math.random() - 0.5) * amount * 0.45;
+  }
+
+  public addImpactShake(amount: number): void {
+    this.shakeIntensity = Math.min(0.32, Math.max(this.shakeIntensity, amount));
   }
 
   public update(
@@ -61,6 +84,9 @@ export class CameraController {
     physics: PhysicsWorld,
     playerColliderHandle: number,
   ): void {
+    this.timeSinceManualLook += dt;
+    this.shakeIntensity = THREE.MathUtils.damp(this.shakeIntensity, 0, 12, dt);
+
     // Smooth recoil recovery
     this.recoilPitch = THREE.MathUtils.damp(this.recoilPitch, 0, 12, dt);
     this.recoilYaw = THREE.MathUtils.damp(this.recoilYaw, 0, 12, dt);
@@ -138,6 +164,95 @@ export class CameraController {
       );
       this.camera.lookAt(_lookTarget);
     }
+  }
+
+  public updateDrivingCamera(
+    dt: number,
+    vehX: number,
+    vehY: number,
+    vehZ: number,
+    vehYaw: number,
+    forwardSpeed: number,
+    maxSpeedForward: number,
+    baseCamDist: number,
+    camHeight: number,
+    physics: PhysicsWorld,
+    playerColliderHandle: number,
+    vehicleColliderHandle: number,
+  ): void {
+    this.timeSinceManualLook += dt;
+    this.shakeIntensity = THREE.MathUtils.damp(this.shakeIntensity, 0, 10, dt);
+
+    // Smooth auto-follow yaw behind vehicle when driving forward and not manually looking around
+    const speedAbs = Math.abs(forwardSpeed);
+    if (this.timeSinceManualLook > 1.25 && speedAbs > 2.0) {
+      let targetYaw = vehYaw;
+      if (forwardSpeed < -2.5) {
+        targetYaw = vehYaw + Math.PI;
+      }
+      const diff = Math.atan2(Math.sin(targetYaw - this.yaw), Math.cos(targetYaw - this.yaw));
+      this.yaw += diff * (1 - Math.exp(-3.4 * dt));
+      this.pitch = THREE.MathUtils.damp(this.pitch, -0.15, 3.2, dt);
+    }
+
+    const clampedPitch = THREE.MathUtils.clamp(this.pitch, -0.62, 0.22);
+    const speedRatio = Math.min(1, speedAbs / Math.max(1, maxSpeedForward));
+
+    // Dynamic FOV expansion at speed
+    const targetFov = Math.min(96, this.baseFov + speedRatio * 7.5);
+    if (Math.abs(this.currentFov - targetFov) > 0.02) {
+      this.currentFov = THREE.MathUtils.damp(this.currentFov, targetFov, 8, dt);
+      this.camera.fov = this.currentFov;
+      this.camera.updateProjectionMatrix();
+    }
+
+    const desiredDist = baseCamDist * DRIVING_ZOOM_SCALES[this.drivingZoomIndex] + speedRatio * 0.65;
+    this.currentDrivingDist = THREE.MathUtils.damp(this.currentDrivingDist, desiredDist, 9, dt);
+
+    _pivot.set(vehX, vehY + camHeight * 0.72, vehZ);
+
+    const cosPitch = Math.cos(clampedPitch);
+    const forwardX = -Math.sin(this.yaw) * cosPitch;
+    const forwardY = Math.sin(clampedPitch);
+    const forwardZ = -Math.cos(this.yaw) * cosPitch;
+
+    const shakeX = this.shakeIntensity > 0.005 ? (Math.random() - 0.5) * this.shakeIntensity : 0;
+    const shakeY = this.shakeIntensity > 0.005 ? (Math.random() - 0.5) * this.shakeIntensity : 0;
+
+    _desiredCamPos.set(
+      _pivot.x - forwardX * this.currentDrivingDist + shakeX,
+      _pivot.y - forwardY * this.currentDrivingDist + 0.55 + shakeY,
+      _pivot.z - forwardZ * this.currentDrivingDist,
+    );
+
+    _rayDir.copy(_desiredCamPos).sub(_pivot);
+    const dist = _rayDir.length();
+    if (dist > 0.1) {
+      _rayDir.divideScalar(dist);
+      const hit = physics.castRay(
+        _pivot.x,
+        _pivot.y,
+        _pivot.z,
+        _rayDir.x,
+        _rayDir.y,
+        _rayDir.z,
+        dist,
+        playerColliderHandle,
+        vehicleColliderHandle,
+      );
+      if (hit && hit.distance < dist) {
+        const safeDist = Math.max(1.2, hit.distance - 0.35);
+        _desiredCamPos.copy(_pivot).addScaledVector(_rayDir, safeDist);
+      }
+    }
+
+    this.camera.position.lerp(_desiredCamPos, 1 - Math.exp(-16 * dt));
+    _lookTarget.set(
+      vehX + (-Math.sin(this.yaw)) * 8.0,
+      vehY + camHeight * 0.55,
+      vehZ + (-Math.cos(this.yaw)) * 8.0,
+    );
+    this.camera.lookAt(_lookTarget);
   }
 
   public getAimForward(target: THREE.Vector3): THREE.Vector3 {

@@ -1,3 +1,5 @@
+import { VehicleType } from '../types/game';
+
 export class AudioSystem {
   private ctx: AudioContext | null = null;
   private masterGain: GainNode | null = null;
@@ -5,6 +7,14 @@ export class AudioSystem {
   private volume = 0.65;
   private lastFootstepAt = 0;
   private lastZoneAlertAt = 0;
+
+  // Continuous engine synthesizer nodes
+  private engineOscMain: OscillatorNode | null = null;
+  private engineOscSub: OscillatorNode | null = null;
+  private engineFilter: BiquadFilterNode | null = null;
+  private engineGain: GainNode | null = null;
+  private engineType: VehicleType = 'sedan';
+  private engineActive = false;
 
   public setVolume(volume: number): void {
     this.volume = Math.max(0, Math.min(1, volume));
@@ -256,7 +266,141 @@ export class AudioSystem {
     });
   }
 
+  public startEngine(type: VehicleType): void {
+    this.engineType = type;
+    if (!this.ctx || !this.masterGain || this.engineActive) return;
+
+    const now = this.ctx.currentTime;
+    const oscMain = this.ctx.createOscillator();
+    oscMain.type = type === 'truck' ? 'sawtooth' : 'sawtooth';
+    const baseFreq = type === 'sedan' ? 54 : type === 'truck' ? 36 : 44;
+    oscMain.frequency.setValueAtTime(baseFreq, now);
+
+    const oscSub = this.ctx.createOscillator();
+    oscSub.type = 'triangle';
+    oscSub.frequency.setValueAtTime(baseFreq * 0.5, now);
+
+    const filter = this.ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.setValueAtTime(220, now);
+    filter.Q.value = 1.6;
+
+    const gain = this.ctx.createGain();
+    gain.gain.setValueAtTime(0.001, now);
+    gain.gain.linearRampToValueAtTime(0.09, now + 0.18);
+
+    oscMain.connect(filter);
+    oscSub.connect(filter);
+    filter.connect(gain);
+    gain.connect(this.masterGain);
+
+    oscMain.start(now);
+    oscSub.start(now);
+
+    this.engineOscMain = oscMain;
+    this.engineOscSub = oscSub;
+    this.engineFilter = filter;
+    this.engineGain = gain;
+    this.engineActive = true;
+  }
+
+  public updateEngine(speedRatio: number, throttleAbs: number): void {
+    if (!this.ctx || !this.engineActive || !this.engineOscMain || !this.engineOscSub || !this.engineFilter || !this.engineGain) {
+      return;
+    }
+    const now = this.ctx.currentTime;
+    const clampedSpeed = Math.max(0, Math.min(1, speedRatio));
+    const base =
+      this.engineType === 'sedan' ? 54 : this.engineType === 'truck' ? 35 : 44;
+    const span =
+      this.engineType === 'sedan' ? 108 : this.engineType === 'truck' ? 54 : 80;
+    const revFreq = base + clampedSpeed * span + throttleAbs * 14;
+
+    this.engineOscMain.frequency.setTargetAtTime(revFreq, now, 0.06);
+    this.engineOscSub.frequency.setTargetAtTime(revFreq * 0.5, now, 0.06);
+    this.engineFilter.frequency.setTargetAtTime(
+      180 + clampedSpeed * 520 + throttleAbs * 140,
+      now,
+      0.08,
+    );
+    const targetVol = this.volume <= 0.01 ? 0.0001 : 0.075 + clampedSpeed * 0.065 + throttleAbs * 0.03;
+    this.engineGain.gain.setTargetAtTime(targetVol, now, 0.08);
+  }
+
+  public stopEngine(): void {
+    if (!this.engineActive) return;
+    this.engineActive = false;
+    try {
+      this.engineOscMain?.stop();
+      this.engineOscSub?.stop();
+      this.engineOscMain?.disconnect();
+      this.engineOscSub?.disconnect();
+      this.engineFilter?.disconnect();
+      this.engineGain?.disconnect();
+    } catch {
+      // Ignore already stopped oscillators
+    }
+    this.engineOscMain = null;
+    this.engineOscSub = null;
+    this.engineFilter = null;
+    this.engineGain = null;
+  }
+
+  public playVehicleDoor(entering: boolean): void {
+    if (!this.ctx || !this.masterGain || this.volume <= 0.01) return;
+    const now = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(entering ? 150 : 120, now);
+    osc.frequency.exponentialRampToValueAtTime(entering ? 52 : 44, now + 0.11);
+
+    const gain = this.ctx.createGain();
+    gain.gain.setValueAtTime(0.24, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.13);
+
+    osc.connect(gain);
+    gain.connect(this.masterGain);
+    osc.start(now);
+    osc.stop(now + 0.14);
+  }
+
+  public playVehicleCollision(intensity: number): void {
+    if (!this.ctx || !this.masterGain || !this.noiseBuffer || this.volume <= 0.01) return;
+    const scale = Math.max(0.15, Math.min(1.0, intensity));
+    const now = this.ctx.currentTime;
+
+    const noise = this.ctx.createBufferSource();
+    noise.buffer = this.noiseBuffer;
+    const filter = this.ctx.createBiquadFilter();
+    filter.type = 'bandpass';
+    filter.frequency.setValueAtTime(420, now);
+    filter.Q.value = 0.8;
+
+    const gain = this.ctx.createGain();
+    gain.gain.setValueAtTime(0.38 * scale, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.22);
+
+    noise.connect(filter);
+    filter.connect(gain);
+    gain.connect(this.masterGain);
+    noise.start(now);
+    noise.stop(now + 0.23);
+
+    const thud = this.ctx.createOscillator();
+    thud.type = 'sine';
+    thud.frequency.setValueAtTime(92, now);
+    thud.frequency.exponentialRampToValueAtTime(30, now + 0.16);
+    const thudGain = this.ctx.createGain();
+    thudGain.gain.setValueAtTime(0.35 * scale, now);
+    thudGain.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
+    thud.connect(thudGain);
+    thudGain.connect(this.masterGain);
+    thud.start(now);
+    thud.stop(now + 0.19);
+  }
+
   public dispose(): void {
+    this.stopEngine();
     if (this.ctx) {
       this.ctx.close().catch(() => {
         // Ignore close errors on already-closed AudioContext

@@ -31,6 +31,7 @@ import { MAP_CATALOG } from '../world/MapCatalog';
 import { MaterialLibrary } from '../world/Materials';
 import { IslandMap } from '../world/Map';
 import { WeaponModelId, WeaponModelsFactory } from '../weapons/WeaponModels';
+import { VehicleInstance, VehicleManager } from '../vehicles/VehicleManager';
 import { AudioSystem } from './AudioSystem';
 import { detectSoftwareWebGL, GameLoop } from './GameLoop';
 import { PhysicsWorld } from './PhysicsWorld';
@@ -69,6 +70,7 @@ export class Game {
   private health = new HealthSystem();
   private safeZone!: SafeZoneSystem;
   private combat!: CombatSystem;
+  private vehicles = new VehicleManager();
   private ai = new AIController();
   private loop!: GameLoop;
 
@@ -104,6 +106,7 @@ export class Game {
   private menuOrbitAngle = 0.4;
   private currentElapsed = 0;
   private lastPlayerFireTime = -10;
+  private ramCooldownByBot = new Map<string, number>();
 
   constructor(
     private container: HTMLElement,
@@ -249,6 +252,7 @@ export class Game {
 
       this.combat = new CombatSystem(this.physics);
       this.scene.add(this.combat.fxGroup);
+      this.scene.add(this.vehicles.group);
 
       this.avatar = new PlayerAvatar(
         this.characterBundle,
@@ -260,6 +264,7 @@ export class Game {
       this.cameraCtrl.camera.add(this.avatar.viewmodelGroup);
 
       this.physics.createPlayerController(0, this.map.getHeightAt(0, 0) + 1.1, 0);
+      this.vehicles.spawnForMap(this.activeMapId, this.physics);
       this.applySettings(this.settings);
 
       if (!this.isSoftwareGl) {
@@ -284,9 +289,11 @@ export class Game {
     if (!this.ready || this.disposed || this.activeMapId === mapId) return;
     this.activeMapId = mapId;
 
+    this.audio.stopEngine();
     this.clearBotRigs();
     this.ai.bots = [];
     this.inventory.clearWorldLoot();
+    this.vehicles.clear(this.physics);
 
     if (this.map) {
       this.scene.remove(this.map.root);
@@ -297,6 +304,7 @@ export class Game {
     this.map = new IslandMap(this.materials, this.physics, mapId);
     this.scene.add(this.map.root);
     this.physics.createPlayerController(0, this.map.getHeightAt(0, 0) + 1.1, 0);
+    this.vehicles.spawnForMap(mapId, this.physics);
 
     this.applyMapAtmosphere(mapId);
     this.map.environment.applyQuality(this.settings.quality);
@@ -314,15 +322,18 @@ export class Game {
   public startNewMatch(): void {
     if (!this.ready) return;
     this.audio.unlock();
+    this.audio.stopEngine();
 
     this.health.reset();
     this.inventory.resetStarterLoadout();
     this.inventory.populateWorldLoot(this.map.generateLootLocations());
     this.safeZone.reset();
 
-    // Clear old bot rigs
+    // Clear old bot rigs and respawn vehicles cleanly for match
     this.clearBotRigs();
     this.ai.bots = [];
+    this.ramCooldownByBot.clear();
+    this.vehicles.spawnForMap(this.activeMapId, this.physics);
     this.avatar.resetVisualState();
     this.avatar.setArmorEquipment(
       this.inventory.equipped.helmetDurability > 0,
@@ -398,6 +409,7 @@ export class Game {
       this.isFiring = false;
       this.prevFireHeld = false;
       this.isAiming = false;
+      this.audio.stopEngine();
       this.input.clearActiveStates();
     }
     this.emitHudSnapshot();
@@ -407,6 +419,10 @@ export class Game {
     if (this.health.eliminated) return;
     this.audio.unlock();
     this.setScreen('playing');
+    const activeVeh = this.vehicles.getPlayerVehicle('player');
+    if (activeVeh && !activeVeh.destroyed) {
+      this.audio.startEngine(activeVeh.spec.type);
+    }
     this.requestPointerLock();
   }
 
@@ -480,8 +496,81 @@ export class Game {
   }
 
   public toggleCameraMode(): void {
-    this.cameraCtrl.toggleMode();
+    if (this.vehicles.getPlayerVehicle('player')) {
+      this.cameraCtrl.cycleDrivingZoom();
+    } else {
+      this.cameraCtrl.toggleMode();
+    }
     this.emitHudSnapshot();
+  }
+
+  public triggerVehicleInteractAction(): void {
+    if (this.screen !== 'playing' || this.health.eliminated) return;
+    this.handleVehicleInteract();
+    this.emitHudSnapshot();
+  }
+
+  private handleVehicleInteract(): void {
+    const activeVeh = this.vehicles.getPlayerVehicle('player');
+    if (activeVeh) {
+      this.exitCurrentVehicle();
+      return;
+    }
+
+    const entered = this.vehicles.tryEnterNearest(
+      'player',
+      this.movement.position.x,
+      this.movement.getFeetY(),
+      this.movement.position.z,
+    );
+    if (!entered) return;
+
+    this.reloadTimer = null;
+    this.health.cancelHealing();
+    this.isFiring = false;
+    this.prevFireHeld = false;
+    this.isAiming = false;
+
+    this.avatar.bodyGroup.visible = false;
+    this.avatar.viewmodelGroup.visible = false;
+    this.cameraCtrl.resetDrivingFollow();
+    this.cameraCtrl.yaw = entered.physics.yaw;
+    this.audio.playVehicleDoor(true);
+    this.audio.startEngine(entered.spec.type);
+  }
+
+  private exitCurrentVehicle(): void {
+    const exited = this.vehicles.exitVehicle(
+      'player',
+      this.physics,
+      this.map.getObstacles(),
+      this.activeMapId,
+    );
+    if (!exited) return;
+
+    this.movement.reset(
+      exited.exitPos.x,
+      exited.exitPos.y,
+      exited.exitPos.z,
+      this.physics,
+    );
+    this.avatar.bodyGroup.visible = this.cameraCtrl.mode === 'third-person';
+    this.avatar.viewmodelGroup.visible = this.cameraCtrl.mode === 'first-person';
+    this.audio.stopEngine();
+    this.audio.playVehicleDoor(false);
+  }
+
+  private handleVehicleDestroyed(vehicle: VehicleInstance): void {
+    this.audio.playVehicleCollision(1.0);
+    if (vehicle.occupantId === 'player') {
+      this.exitCurrentVehicle();
+      this.health.applyDamage(22, false, this.inventory.equipped, true);
+      this.damageFlashAlpha = 0.85;
+      this.cameraCtrl.addImpactShake(0.28);
+      if (this.health.eliminated) {
+        this.handlePlayerEliminated(`${vehicle.spec.name} Wreckage`);
+      }
+    }
   }
 
   private update(dt: number, elapsed: number): void {
@@ -537,42 +626,57 @@ export class Game {
         if (playerInput.lookDeltaX !== 0 || playerInput.lookDeltaY !== 0) {
           this.cameraCtrl.addLookDelta(playerInput.lookDeltaX, playerInput.lookDeltaY, 1.0);
         }
+        if (playerInput.vehicleInteract) {
+          this.handleVehicleInteract();
+        }
+      }
+
+      let activeVeh = this.vehicles.getPlayerVehicle('player');
+
+      if (this.screen === 'playing') {
         if (playerInput.toggleCamera) {
           this.toggleCameraMode();
         }
-        if (playerInput.interact) {
-          this.pickupNearestLootAction();
-        }
-        if (playerInput.reload) {
-          this.startReload();
-        }
-        if (playerInput.switchPrimary) {
-          this.switchWeaponSlot('primary');
-        } else if (playerInput.switchSecondary) {
-          this.switchWeaponSlot('secondary');
-        } else if (playerInput.cycleWeapon) {
-          const nextSlot =
-            this.inventory.equipped.activeSlot === 'primary'
-              ? 'secondary'
-              : this.inventory.equipped.primary
-                ? 'primary'
-                : 'secondary';
-          this.switchWeaponSlot(nextSlot);
-        }
-        if (playerInput.quickHeal) {
-          const med = this.inventory.findBestMedicalItem();
-          if (med) this.useMedicalItem(med.uid);
-        }
 
-        this.isAiming = playerInput.aim;
-        const fireJustPressed = playerInput.fire && !this.prevFireHeld;
-        this.prevFireHeld = playerInput.fire;
+        if (!activeVeh) {
+          if (playerInput.interact) {
+            this.pickupNearestLootAction();
+          }
+          if (playerInput.reload) {
+            this.startReload();
+          }
+          if (playerInput.switchPrimary) {
+            this.switchWeaponSlot('primary');
+          } else if (playerInput.switchSecondary) {
+            this.switchWeaponSlot('secondary');
+          } else if (playerInput.cycleWeapon) {
+            const nextSlot =
+              this.inventory.equipped.activeSlot === 'primary'
+                ? 'secondary'
+                : this.inventory.equipped.primary
+                  ? 'primary'
+                  : 'secondary';
+            this.switchWeaponSlot(nextSlot);
+          }
+          if (playerInput.quickHeal) {
+            const med = this.inventory.findBestMedicalItem();
+            if (med) this.useMedicalItem(med.uid);
+          }
 
-        if (fireJustPressed) {
-          this.isFiring = true;
-          this.tryPlayerFire();
-        } else if (!playerInput.fire) {
+          this.isAiming = playerInput.aim;
+          const fireJustPressed = playerInput.fire && !this.prevFireHeld;
+          this.prevFireHeld = playerInput.fire;
+
+          if (fireJustPressed) {
+            this.isFiring = true;
+            this.tryPlayerFire();
+          } else if (!playerInput.fire) {
+            this.isFiring = false;
+          }
+        } else {
+          this.prevFireHeld = false;
           this.isFiring = false;
+          this.isAiming = false;
         }
       } else {
         this.prevFireHeld = false;
@@ -580,45 +684,160 @@ export class Game {
         this.isAiming = false;
       }
 
-      // 1. Player Physics & Movement
-      const activeInput =
-        this.screen === 'playing'
-          ? {
-              moveX: playerInput.moveX,
-              moveY: playerInput.moveY,
-              sprint: playerInput.sprint,
-              crouch: playerInput.crouch,
-              jump: playerInput.jumpHeld || playerInput.jumpPressed,
-            }
-          : {
-              moveX: 0,
-              moveY: 0,
-              sprint: false,
-              crouch: this.movement.isCrouching,
-              jump: false,
-            };
-
       const mapHeightAt = (x: number, z: number) => this.map.getHeightAt(x, z);
-      this.movement.update(
-        dt,
-        this.cameraCtrl.yaw,
-        activeInput,
-        this.physics,
-        this.health,
-        mapHeightAt,
-      );
 
-      if (this.movement.isMoving && this.movement.grounded) {
-        const zone = this.map.getZoneAt(this.movement.position.x, this.movement.position.z);
-        this.audio.playFootstep(
-          this.movement.isSprinting,
-          zone === 'urban' || zone === 'industrial',
+      // 1. Player or Vehicle Physics Update
+      if (!activeVeh) {
+        const activeInput =
+          this.screen === 'playing'
+            ? {
+                moveX: playerInput.moveX,
+                moveY: playerInput.moveY,
+                sprint: playerInput.sprint,
+                crouch: playerInput.crouch,
+                jump: playerInput.jumpHeld || playerInput.jumpPressed,
+              }
+            : {
+                moveX: 0,
+                moveY: 0,
+                sprint: false,
+                crouch: this.movement.isCrouching,
+                jump: false,
+              };
+
+        this.movement.update(
+          dt,
+          this.cameraCtrl.yaw,
+          activeInput,
+          this.physics,
+          this.health,
+          mapHeightAt,
         );
+
+        if (this.movement.isMoving && this.movement.grounded) {
+          const zone = this.map.getZoneAt(this.movement.position.x, this.movement.position.z);
+          this.audio.playFootstep(
+            this.movement.isSprinting,
+            zone === 'urban' || zone === 'industrial',
+          );
+        }
+
+        this.vehicles.update(
+          dt,
+          elapsed,
+          null,
+          { throttle: 0, steer: 0, handbrake: true },
+          this.cameraCtrl.camera.position,
+          this.physics,
+          this.activeMapId,
+          (ev) => {
+            if (ev.impactSpeed > 4.2) {
+              this.audio.playVehicleCollision(Math.min(0.6, ev.impactSpeed / 20));
+            }
+          },
+          (v) => this.handleVehicleDestroyed(v),
+        );
+      } else {
+        const driverInput =
+          this.screen === 'playing'
+            ? {
+                throttle: playerInput.moveY,
+                steer: playerInput.moveX,
+                handbrake: playerInput.jumpHeld,
+              }
+            : { throttle: 0, steer: 0, handbrake: true };
+
+        this.vehicles.update(
+          dt,
+          elapsed,
+          'player',
+          driverInput,
+          this.cameraCtrl.camera.position,
+          this.physics,
+          this.activeMapId,
+          (ev) => {
+            if (ev.isOccupiedByPlayer && ev.impactSpeed > 3.0) {
+              const norm = Math.min(1, ev.impactSpeed / 18);
+              this.audio.playVehicleCollision(norm);
+              this.cameraCtrl.addImpactShake(0.06 + norm * 0.2);
+            }
+          },
+          (v) => this.handleVehicleDestroyed(v),
+        );
+
+        activeVeh = this.vehicles.getPlayerVehicle('player');
+        if (activeVeh) {
+          this.movement.position.x = activeVeh.physics.x;
+          this.movement.position.y = activeVeh.physics.y + 1.05;
+          this.movement.position.z = activeVeh.physics.z;
+          this.movement.horizontalSpeed = Math.abs(activeVeh.physics.forwardSpeed);
+          this.movement.isMoving = false;
+          this.movement.isSprinting = false;
+          this.physics.teleportPlayer(
+            activeVeh.physics.x,
+            activeVeh.physics.y + 1.05,
+            activeVeh.physics.z,
+          );
+          this.physics.stepWorld();
+
+          const speedRatio =
+            Math.abs(activeVeh.physics.forwardSpeed) /
+            Math.max(1, activeVeh.spec.maxSpeedForward);
+          this.audio.updateEngine(speedRatio, Math.abs(driverInput.throttle));
+
+          // Acoustic alerting for AI when driving quickly
+          if (Math.abs(activeVeh.physics.forwardSpeed) > 6.0 && Math.random() < dt * 2.2) {
+            this.ai.notifySoundEvent(
+              activeVeh.physics.x,
+              activeVeh.physics.y,
+              activeVeh.physics.z,
+              'player',
+              56,
+              this.currentElapsed,
+            );
+          }
+
+          // Vehicle-vs-bot impact check
+          const vehSpeed = Math.abs(activeVeh.physics.forwardSpeed);
+          if (vehSpeed > 5.5) {
+            const hitRad = activeVeh.spec.width * 0.56 + 0.58;
+            for (const bot of this.ai.bots) {
+              if (bot.state === 'Eliminated') continue;
+              const lastHit = this.ramCooldownByBot.get(bot.id) ?? -10;
+              if (elapsed - lastHit < 0.7) continue;
+              const dist = Math.hypot(
+                bot.x - activeVeh.physics.x,
+                bot.z - activeVeh.physics.z,
+              );
+              if (dist < hitRad && Math.abs(bot.y - activeVeh.physics.y) < 2.2) {
+                this.ramCooldownByBot.set(bot.id, elapsed);
+                const ramDmg = Math.round(vehSpeed * 4.2);
+                const res = this.ai.applyDamageToBot(
+                  bot,
+                  ramDmg,
+                  'player',
+                  this.currentElapsed,
+                );
+                this.damageDealt += Math.round(res.damage);
+                this.hitMarkerAlpha = 1.0;
+                this.hitMarkerKill = res.eliminated;
+                this.audio.playVehicleCollision(Math.min(1, vehSpeed / 18));
+                this.audio.playHitMarker(res.eliminated);
+                if (res.eliminated) {
+                  this.kills += 1;
+                  this.handleBotEliminated(bot, 'You', activeVeh.spec.name);
+                }
+              }
+            }
+          }
+        } else {
+          this.physics.stepWorld();
+        }
       }
 
       // 2. Healing & Reloading timers
       if (this.health.isHealing()) {
-        if (this.movement.isSprinting || this.isFiring) {
+        if (this.movement.isSprinting || this.isFiring || activeVeh) {
           this.health.cancelHealing();
         } else {
           const healed = this.health.updateHealing(dt);
@@ -637,8 +856,8 @@ export class Game {
         }
       }
 
-      // 3. Automatic / Continuous Player Firing
-      if (this.screen === 'playing' && this.isFiring) {
+      // 3. Automatic / Continuous Player Firing (on foot)
+      if (this.screen === 'playing' && this.isFiring && !activeVeh) {
         this.tryPlayerFire();
       }
 
@@ -675,7 +894,7 @@ export class Game {
           health: this.health.health,
           maxHealth: this.health.maxHealth,
           isCrouching: this.movement.isCrouching,
-          isSprinting: this.movement.isSprinting,
+          isSprinting: this.movement.isSprinting || Boolean(activeVeh),
           lastFiredAt: this.lastPlayerFireTime,
         },
         this.safeZone,
@@ -694,32 +913,51 @@ export class Game {
       // 8. Player Camera & Avatar
       const activeWeapon = this.inventory.getActiveWeapon();
       const adsDelta = activeWeapon ? activeWeapon.adsFovDelta : -10;
-      this.cameraCtrl.update(
-        dt,
-        this.movement.position.x,
-        playerFeetY,
-        this.movement.position.z,
-        this.movement.isCrouching,
-        this.isAiming && !this.reloadTimer,
-        adsDelta,
-        this.physics,
-        this.physics.playerCollider.handle,
-      );
+      if (activeVeh) {
+        this.cameraCtrl.updateDrivingCamera(
+          dt,
+          activeVeh.physics.x,
+          activeVeh.physics.y,
+          activeVeh.physics.z,
+          activeVeh.physics.yaw,
+          activeVeh.physics.forwardSpeed,
+          activeVeh.spec.maxSpeedForward,
+          activeVeh.spec.defaultCamDist,
+          activeVeh.spec.camHeight,
+          this.physics,
+          this.physics.playerCollider.handle,
+          activeVeh.physics.collider.handle,
+        );
+        this.avatar.bodyGroup.visible = false;
+        this.avatar.viewmodelGroup.visible = false;
+      } else {
+        this.cameraCtrl.update(
+          dt,
+          this.movement.position.x,
+          playerFeetY,
+          this.movement.position.z,
+          this.movement.isCrouching,
+          this.isAiming && !this.reloadTimer,
+          adsDelta,
+          this.physics,
+          this.physics.playerCollider.handle,
+        );
 
-      this.avatar.setArmorEquipment(
-        this.inventory.equipped.helmetDurability > 0,
-        this.inventory.equipped.vestDurability > 0,
-      );
+        this.avatar.setArmorEquipment(
+          this.inventory.equipped.helmetDurability > 0,
+          this.inventory.equipped.vestDurability > 0,
+        );
 
-      this.avatar.updateVisuals(
-        dt,
-        this.movement,
-        this.cameraCtrl,
-        this.isAiming,
-        this.reloadTimer !== null,
-        activeWeapon?.id,
-        this.health.eliminated,
-      );
+        this.avatar.updateVisuals(
+          dt,
+          this.movement,
+          this.cameraCtrl,
+          this.isAiming,
+          this.reloadTimer !== null,
+          activeWeapon?.id,
+          this.health.eliminated,
+        );
+      }
 
       // Keep shadow frustum centered near player for crisp shadows
       this.sunLight.position.set(
@@ -820,6 +1058,16 @@ export class Game {
     let anyHit = false;
     let anyKill = false;
     for (const out of outcomes) {
+      if (out.hitVehicleId) {
+        const vehRes = this.vehicles.applyDamage(out.hitVehicleId, out.damage);
+        if (vehRes) {
+          this.hitMarkerAlpha = Math.max(this.hitMarkerAlpha, 0.7);
+          if (vehRes.justDestroyed) {
+            this.handleVehicleDestroyed(vehRes.vehicle);
+          }
+        }
+        continue;
+      }
       if (!out.hitTargetId) continue;
       const bot = this.ai.bots.find((b) => b.id === out.hitTargetId);
       if (!bot || bot.state === 'Eliminated') continue;
@@ -874,12 +1122,25 @@ export class Game {
     if (!ev.hit) return;
 
     if (ev.target.id === 'player') {
-      this.health.applyDamage(ev.damage, ev.isHeadshot, this.inventory.equipped, false);
-      this.damageFlashAlpha = 0.85;
-      this.audio.playDamageTaken();
-      this.avatar.triggerHitReaction();
-      if (this.health.eliminated) {
-        this.handlePlayerEliminated(`${ev.bot.name} (${ev.bot.weapon.name})`);
+      const playerVeh = this.vehicles.getPlayerVehicle('player');
+      let playerDmg = ev.damage;
+      if (playerVeh) {
+        // Vehicle chassis absorbs 70% of incoming gunfire
+        const armorDmg = Math.max(2, Math.round(ev.damage * 0.75));
+        playerDmg = Math.max(1, Math.round(ev.damage * 0.3));
+        const res = this.vehicles.applyDamage(playerVeh.id, armorDmg);
+        if (res?.justDestroyed) {
+          this.handleVehicleDestroyed(res.vehicle);
+        }
+      }
+      if (!this.health.eliminated) {
+        this.health.applyDamage(playerDmg, ev.isHeadshot, this.inventory.equipped, false);
+        this.damageFlashAlpha = 0.85;
+        this.audio.playDamageTaken();
+        this.avatar.triggerHitReaction();
+        if (this.health.eliminated) {
+          this.handlePlayerEliminated(`${ev.bot.name} (${ev.bot.weapon.name})`);
+        }
       }
     } else {
       const targetBot = this.ai.bots.find((b) => b.id === ev.target.id);
@@ -920,6 +1181,7 @@ export class Game {
 
   private handlePlayerEliminated(by: string): void {
     this.eliminatedBy = by;
+    this.audio.stopEngine();
     this.avatar.triggerElimination();
     this.pushKillFeed(by, 'You', '');
     this.finishMatch(false);
@@ -927,6 +1189,7 @@ export class Game {
 
   private finishMatch(victory: boolean): void {
     if (this.screen === 'results') return;
+    this.audio.stopEngine();
     this.audio.playMatchEnd(victory);
     const aliveBots = this.countAliveBots();
     const placement = victory ? 1 : aliveBots + 1;
@@ -1035,15 +1298,26 @@ export class Game {
     if (!this.ready) return;
     const playerFeetY = this.movement.getFeetY();
     const yawDeg = (((-this.cameraCtrl.yaw * 180) / Math.PI) % 360 + 360) % 360;
-    const blips: MinimapBlip[] = this.gunfireBlips.map((b) => ({
-      x: b.x,
-      z: b.z,
-      kind: 'gunfire',
-      alpha: Math.min(1, b.timeLeft / 2.2),
-    }));
+    const blips: MinimapBlip[] = [
+      ...this.vehicles.getMinimapBlips(),
+      ...this.gunfireBlips.map((b) => ({
+        x: b.x,
+        z: b.z,
+        kind: 'gunfire' as const,
+        alpha: Math.min(1, b.timeLeft / 2.2),
+      })),
+    ];
 
     const currentZone = this.map.getZoneAt(this.movement.position.x, this.movement.position.z);
     const mapSpec = MAP_CATALOG[this.activeMapId];
+    const activeVeh = this.vehicles.getPlayerVehicle('player');
+    const vehiclePrompt = activeVeh
+      ? null
+      : this.vehicles.findNearestInteractable(
+          this.movement.position.x,
+          playerFeetY,
+          this.movement.position.z,
+        );
 
     this.onHudUpdate({
       screen: this.screen,
@@ -1070,11 +1344,17 @@ export class Game {
       equipped: { ...this.inventory.equipped },
       inventory: this.inventory.items.map((i) => ({ ...i })),
       safeZone: this.safeZone.getSnapshot(this.movement.position.x, this.movement.position.z),
-      lootPrompt: this.inventory.findNearestLoot(
-        this.movement.position.x,
-        playerFeetY,
-        this.movement.position.z,
-      ),
+      lootPrompt: activeVeh
+        ? null
+        : this.inventory.findNearestLoot(
+            this.movement.position.x,
+            playerFeetY,
+            this.movement.position.z,
+          ),
+      vehiclePrompt,
+      activeVehicle: activeVeh
+        ? this.vehicles.getHudState(activeVeh, this.cameraCtrl.drivingZoomIndex)
+        : null,
       healing: this.health.getHealingState(),
       reloading: this.reloadTimer
         ? {
@@ -1133,6 +1413,7 @@ export class Game {
     this.inventory?.dispose();
     this.safeZone?.dispose();
     this.combat?.dispose();
+    this.vehicles.dispose(this.physics);
     this.clearBotRigs();
     this.avatar?.dispose();
     this.weaponFactory?.dispose();

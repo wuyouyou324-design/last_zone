@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from 'react';
-import { Shield, Eye, Package, HeartPulse } from 'lucide-react';
+import { Shield, Eye, Package, HeartPulse, Fuel, Gauge, Wrench } from 'lucide-react';
 import { TouchInput } from '../input/TouchInput';
 import { HudSnapshot } from '../types/game';
 import { ISLAND_SIZE } from '../world/Terrain';
@@ -87,13 +87,23 @@ export const HUD: React.FC<HUDProps> = ({
     ctx.arc(cx, cz, scaleRadius(hud.safeZone.currentRadius), 0, Math.PI * 2);
     ctx.stroke();
 
-    // Gunfire acoustic blips
+    // Minimap blips (gunfire & vehicles)
     for (const blip of hud.minimapBlips) {
       const [bx, bz] = toPx(blip.x, blip.z);
-      ctx.fillStyle = `rgba(239, 68, 68, ${blip.alpha.toFixed(2)})`;
-      ctx.beginPath();
-      ctx.arc(bx, bz, 3.2, 0, Math.PI * 2);
-      ctx.fill();
+      if (blip.kind === 'vehicle') {
+        ctx.save();
+        ctx.fillStyle = '#38BDF8';
+        ctx.strokeStyle = '#0F1318';
+        ctx.lineWidth = 1.2;
+        ctx.fillRect(bx - 3, bz - 2.2, 6, 4.4);
+        ctx.strokeRect(bx - 3, bz - 2.2, 6, 4.4);
+        ctx.restore();
+      } else {
+        ctx.fillStyle = `rgba(239, 68, 68, ${blip.alpha.toFixed(2)})`;
+        ctx.beginPath();
+        ctx.arc(bx, bz, 3.2, 0, Math.PI * 2);
+        ctx.fill();
+      }
     }
 
     // Player heading triangle
@@ -147,6 +157,26 @@ export const HUD: React.FC<HUDProps> = ({
 
   const healthColor =
     hud.health > 55 ? 'bg-emerald-500' : hud.health > 25 ? 'bg-amber-500' : 'bg-red-500';
+  const activeVeh = hud.activeVehicle;
+  const vehHpPct = activeVeh
+    ? Math.max(0, Math.min(100, (activeVeh.health / activeVeh.maxHealth) * 100))
+    : 0;
+  const vehFuelPct = activeVeh
+    ? Math.max(0, Math.min(100, (activeVeh.fuel / activeVeh.maxFuel) * 100))
+    : 0;
+  const vehHpColor =
+    vehHpPct > 55 ? 'bg-emerald-400' : vehHpPct > 25 ? 'bg-amber-400' : 'bg-red-500';
+  const surfaceLabel = activeVeh
+    ? activeVeh.surface === 'road'
+      ? 'ROAD'
+      : activeVeh.surface === 'shallow_water'
+        ? 'WATER'
+        : activeVeh.surface === 'sand'
+          ? 'SAND'
+          : activeVeh.surface === 'snow'
+            ? 'SNOW'
+            : 'OFF-ROAD'
+    : '';
 
   return (
     <div className="fixed inset-0 z-10 pointer-events-none safe-area-hud">
@@ -402,19 +432,21 @@ export const HUD: React.FC<HUDProps> = ({
         </>
       )}
 
-      {/* Center Crosshair & Hit Markers */}
+      {/* Center Crosshair & Hit Markers (hide firearm crosshair while driving) */}
       <div className="fixed inset-0 flex items-center justify-center">
         <div className="relative">
-          <div
-            className={`relative w-6 h-6 transition-transform duration-75 ${
-              hud.isAiming ? 'scale-75' : hud.isCrouching ? 'scale-90' : 'scale-100'
-            }`}
-          >
-            <span className="absolute left-1/2 top-0 -translate-x-1/2 w-0.5 h-1.5 bg-white/90" />
-            <span className="absolute left-1/2 bottom-0 -translate-x-1/2 w-0.5 h-1.5 bg-white/90" />
-            <span className="absolute top-1/2 left-0 -translate-y-1/2 h-0.5 w-1.5 bg-white/90" />
-            <span className="absolute top-1/2 right-0 -translate-y-1/2 h-0.5 w-1.5 bg-white/90" />
-          </div>
+          {!activeVeh && (
+            <div
+              className={`relative w-6 h-6 transition-transform duration-75 ${
+                hud.isAiming ? 'scale-75' : hud.isCrouching ? 'scale-90' : 'scale-100'
+              }`}
+            >
+              <span className="absolute left-1/2 top-0 -translate-x-1/2 w-0.5 h-1.5 bg-white/90" />
+              <span className="absolute left-1/2 bottom-0 -translate-x-1/2 w-0.5 h-1.5 bg-white/90" />
+              <span className="absolute top-1/2 left-0 -translate-y-1/2 h-0.5 w-1.5 bg-white/90" />
+              <span className="absolute top-1/2 right-0 -translate-y-1/2 h-0.5 w-1.5 bg-white/90" />
+            </div>
+          )}
 
           {hud.hitMarkerAlpha > 0.05 && (
             <div
@@ -446,7 +478,7 @@ export const HUD: React.FC<HUDProps> = ({
         </div>
       )}
 
-      {/* Loot Pickup / Healing / Reloading Prompts */}
+      {/* Loot Pickup / Vehicle Entry / Healing / Reloading Prompts */}
       <div
         className={`fixed left-1/2 -translate-x-1/2 flex flex-col items-center gap-2 ${
           isTouchLayout
@@ -456,7 +488,31 @@ export const HUD: React.FC<HUDProps> = ({
             : 'bottom-32'
         }`}
       >
-        {!isTouchLayout && hud.lootPrompt && (
+        {!isTouchLayout && !activeVeh && hud.vehiclePrompt && (
+          <div
+            data-testid="desktop-vehicle-prompt"
+            className={`bg-[#0F1318]/92 border px-4 py-2 text-xs flex items-center gap-2 ${
+              hud.vehiclePrompt.disabled
+                ? 'border-red-500/50 text-red-300'
+                : hud.vehiclePrompt.occupied
+                  ? 'border-amber-500/40 text-amber-200'
+                  : 'border-sky-400/60 text-slate-100'
+            }`}
+          >
+            <span className="font-mono-tabular font-bold text-sky-400">
+              {hud.vehiclePrompt.disabled ? '[WRECK]' : hud.vehiclePrompt.occupied ? '[BUSY]' : '[E]'}
+            </span>
+            <span>
+              {hud.vehiclePrompt.disabled
+                ? `${hud.vehiclePrompt.name} Destroyed`
+                : hud.vehiclePrompt.occupied
+                  ? `${hud.vehiclePrompt.name} Occupied`
+                  : `Drive ${hud.vehiclePrompt.name}`}
+            </span>
+          </div>
+        )}
+
+        {!isTouchLayout && !activeVeh && hud.lootPrompt && (
           <div className="bg-[#0F1318]/92 border border-amber-400/50 px-4 py-2 text-xs text-slate-100 flex items-center gap-2">
             <span className="font-mono-tabular font-bold text-amber-400">[F]</span>
             <span>Collect {hud.lootPrompt.name}</span>
@@ -512,62 +568,176 @@ export const HUD: React.FC<HUDProps> = ({
         </div>
       )}
 
-      {/* Vitals, Stamina, Armor & Weapon Bar (Edge-docked on mobile so center view stays clear) */}
+      {/* Vitals / Vehicle Telemetry Bar */}
       {isTouchLayout ? (
         isTouchLandscape ? (
-          <div
-            data-testid="mobile-vitals-bar"
-            className="fixed z-10 bottom-2 left-[44%] -translate-x-1/2 w-[min(264px,34vw)] bg-[#0F1318]/85 border border-white/12 px-2.5 py-1.5"
-          >
-            <div className="grid grid-cols-12 gap-2 items-center">
-              <div className="col-span-7 space-y-1">
-                <div>
-                  <div className="flex items-center justify-between text-[10px] mb-0.5">
-                    <span className="text-slate-300 font-medium">
-                      HP {hud.isCrouching ? '· Crouch' : ''}
-                    </span>
-                    <span className="font-mono-tabular font-bold text-slate-100">
-                      {Math.ceil(hud.health)}/{hud.maxHealth}
-                    </span>
+          activeVeh ? (
+            <div
+              data-testid="mobile-driving-hud"
+              className="fixed z-10 bottom-2 left-1/2 -translate-x-1/2 w-[min(272px,35vw)] bg-[#0F1318]/88 border border-sky-400/35 px-2.5 py-1.5"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="text-[10px] font-semibold text-slate-200 truncate">
+                    {activeVeh.name}
                   </div>
-                  <div className="h-1.5 bg-white/10">
+                  <div className="flex items-center gap-1.5 text-[9px] text-slate-400">
+                    <span className="text-sky-400 font-semibold">{surfaceLabel}</span>
+                    {activeVeh.handbrake && (
+                      <span className="text-amber-400 font-semibold">· PARK</span>
+                    )}
+                  </div>
+                </div>
+                <div className="flex items-baseline gap-1 shrink-0">
+                  <span className="font-display text-lg font-bold font-mono-tabular text-slate-100 leading-none">
+                    {activeVeh.speedKmh}
+                  </span>
+                  <span className="text-[9px] text-slate-400">km/h</span>
+                  <span className="ml-1 px-1 py-0.5 bg-white/10 text-[9px] font-mono-tabular font-bold text-amber-400">
+                    {activeVeh.gear}
+                  </span>
+                </div>
+              </div>
+              <div className="mt-1 grid grid-cols-3 gap-1.5 text-[9px]">
+                <div>
+                  <div className="flex justify-between text-slate-400 mb-0.5">
+                    <span>VEH</span>
+                    <span className="font-mono-tabular text-slate-200">{Math.round(vehHpPct)}%</span>
+                  </div>
+                  <div className="h-1 bg-white/10">
+                    <div className={`h-full ${vehHpColor}`} style={{ width: `${vehHpPct}%` }} />
+                  </div>
+                </div>
+                <div>
+                  <div className="flex justify-between text-slate-400 mb-0.5">
+                    <span>FUEL</span>
+                    <span className="font-mono-tabular text-slate-200">{Math.round(vehFuelPct)}%</span>
+                  </div>
+                  <div className="h-1 bg-white/10">
+                    <div className="h-full bg-amber-400" style={{ width: `${vehFuelPct}%` }} />
+                  </div>
+                </div>
+                <div>
+                  <div className="flex justify-between text-slate-400 mb-0.5">
+                    <span>HP</span>
+                    <span className="font-mono-tabular text-slate-200">{Math.ceil(hud.health)}</span>
+                  </div>
+                  <div className="h-1 bg-white/10">
                     <div
-                      className={`h-full transition-all duration-100 ${healthColor}`}
+                      className={`h-full ${healthColor}`}
                       style={{ width: `${(hud.health / hud.maxHealth) * 100}%` }}
                     />
                   </div>
                 </div>
-
-                <div className="flex items-center gap-1.5">
-                  <div className="flex-1 h-1 bg-white/10">
-                    <div
-                      className="h-full bg-amber-400 transition-all duration-75"
-                      style={{ width: `${(hud.stamina / hud.maxStamina) * 100}%` }}
-                    />
+              </div>
+            </div>
+          ) : (
+            <div
+              data-testid="mobile-vitals-bar"
+              className="fixed z-10 bottom-2 left-[44%] -translate-x-1/2 w-[min(264px,34vw)] bg-[#0F1318]/85 border border-white/12 px-2.5 py-1.5"
+            >
+              <div className="grid grid-cols-12 gap-2 items-center">
+                <div className="col-span-7 space-y-1">
+                  <div>
+                    <div className="flex items-center justify-between text-[10px] mb-0.5">
+                      <span className="text-slate-300 font-medium">
+                        HP {hud.isCrouching ? '· Crouch' : ''}
+                      </span>
+                      <span className="font-mono-tabular font-bold text-slate-100">
+                        {Math.ceil(hud.health)}/{hud.maxHealth}
+                      </span>
+                    </div>
+                    <div className="h-1.5 bg-white/10">
+                      <div
+                        className={`h-full transition-all duration-100 ${healthColor}`}
+                        style={{ width: `${(hud.health / hud.maxHealth) * 100}%` }}
+                      />
+                    </div>
                   </div>
-                  <span className="font-mono-tabular text-[9px] text-slate-300">
-                    {Math.round(hud.stamina)}%
-                  </span>
+
+                  <div className="flex items-center gap-1.5">
+                    <div className="flex-1 h-1 bg-white/10">
+                      <div
+                        className="h-full bg-amber-400 transition-all duration-75"
+                        style={{ width: `${(hud.stamina / hud.maxStamina) * 100}%` }}
+                      />
+                    </div>
+                    <span className="font-mono-tabular text-[9px] text-slate-300">
+                      {Math.round(hud.stamina)}%
+                    </span>
+                  </div>
+                </div>
+
+                <div className="col-span-5 border-l border-white/10 pl-2">
+                  <div className="text-[9px] text-slate-400 truncate">
+                    {activeWeapon ? activeWeapon.name : 'No Weapon'}
+                  </div>
+                  <div className="font-display text-base font-bold font-mono-tabular text-slate-100 leading-tight">
+                    {activeMag}
+                    <span className="text-[10px] text-slate-400 font-normal ml-1">/ {activeReserve}</span>
+                  </div>
+                  <div className="flex items-center gap-2 text-[9px] text-slate-400">
+                    <span className="inline-flex items-center gap-0.5">
+                      <Shield className="w-2.5 h-2.5 text-emerald-400" />
+                      <span className="font-mono-tabular">{Math.round(hud.equipped.vestDurability)}</span>
+                    </span>
+                    <span className="inline-flex items-center gap-0.5">
+                      <Shield className="w-2.5 h-2.5 text-sky-400" />
+                      <span className="font-mono-tabular">{Math.round(hud.equipped.helmetDurability)}</span>
+                    </span>
+                  </div>
                 </div>
               </div>
-
-              <div className="col-span-5 border-l border-white/10 pl-2">
-                <div className="text-[9px] text-slate-400 truncate">
-                  {activeWeapon ? activeWeapon.name : 'No Weapon'}
+            </div>
+          )
+        ) : activeVeh ? (
+          <div
+            data-testid="mobile-driving-hud"
+            className="fixed z-10 top-[130px] left-2.5 w-[144px] bg-[#0F1318]/88 border border-sky-400/35 px-2 py-1.5 space-y-1.5"
+          >
+            <div className="flex items-center justify-between gap-1">
+              <span className="text-[10px] font-semibold text-slate-200 truncate">
+                {activeVeh.name}
+              </span>
+              <span className="px-1 bg-white/10 text-[9px] font-mono-tabular font-bold text-amber-400">
+                {activeVeh.gear}
+              </span>
+            </div>
+            <div className="flex items-baseline justify-between">
+              <span className="font-display text-lg font-bold font-mono-tabular text-slate-100 leading-none">
+                {activeVeh.speedKmh} <span className="text-[9px] font-normal text-slate-400">km/h</span>
+              </span>
+              <span className="text-[9px] text-sky-400 font-semibold">{surfaceLabel}</span>
+            </div>
+            <div className="space-y-1 text-[9px]">
+              <div>
+                <div className="flex justify-between text-slate-400">
+                  <span>Armor</span>
+                  <span className="font-mono-tabular text-slate-200">{Math.round(vehHpPct)}%</span>
                 </div>
-                <div className="font-display text-base font-bold font-mono-tabular text-slate-100 leading-tight">
-                  {activeMag}
-                  <span className="text-[10px] text-slate-400 font-normal ml-1">/ {activeReserve}</span>
+                <div className="h-1 bg-white/10">
+                  <div className={`h-full ${vehHpColor}`} style={{ width: `${vehHpPct}%` }} />
                 </div>
-                <div className="flex items-center gap-2 text-[9px] text-slate-400">
-                  <span className="inline-flex items-center gap-0.5">
-                    <Shield className="w-2.5 h-2.5 text-emerald-400" />
-                    <span className="font-mono-tabular">{Math.round(hud.equipped.vestDurability)}</span>
-                  </span>
-                  <span className="inline-flex items-center gap-0.5">
-                    <Shield className="w-2.5 h-2.5 text-sky-400" />
-                    <span className="font-mono-tabular">{Math.round(hud.equipped.helmetDurability)}</span>
-                  </span>
+              </div>
+              <div>
+                <div className="flex justify-between text-slate-400">
+                  <span>Fuel</span>
+                  <span className="font-mono-tabular text-slate-200">{Math.round(vehFuelPct)}%</span>
+                </div>
+                <div className="h-1 bg-white/10">
+                  <div className="h-full bg-amber-400" style={{ width: `${vehFuelPct}%` }} />
+                </div>
+              </div>
+              <div>
+                <div className="flex justify-between text-slate-400">
+                  <span>Player HP</span>
+                  <span className="font-mono-tabular text-slate-200">{Math.ceil(hud.health)}</span>
+                </div>
+                <div className="h-1 bg-white/10">
+                  <div
+                    className={`h-full ${healthColor}`}
+                    style={{ width: `${(hud.health / hud.maxHealth) * 100}%` }}
+                  />
                 </div>
               </div>
             </div>
@@ -629,6 +799,118 @@ export const HUD: React.FC<HUDProps> = ({
             </div>
           </div>
         )
+      ) : activeVeh ? (
+        <div
+          data-testid="desktop-driving-hud"
+          className="fixed bottom-4 left-1/2 -translate-x-1/2 w-[min(560px,92vw)] bg-[#0F1318]/92 border border-sky-400/40 p-3"
+        >
+          <div className="grid grid-cols-12 gap-3 items-center">
+            {/* Speedometer & Gear */}
+            <div className="col-span-4 border-r border-white/10 pr-3">
+              <div className="flex items-center gap-1.5 text-[11px] text-sky-400 font-semibold uppercase tracking-wider">
+                <Gauge className="w-3.5 h-3.5" />
+                <span className="truncate">{activeVeh.name}</span>
+              </div>
+              <div className="mt-1 flex items-baseline gap-2">
+                <span className="font-display text-3xl font-bold font-mono-tabular text-slate-100 leading-none">
+                  {activeVeh.speedKmh}
+                </span>
+                <span className="text-xs text-slate-400">km/h</span>
+                <span className="ml-auto px-2 py-0.5 bg-white/10 border border-white/15 font-mono-tabular text-xs font-bold text-amber-400">
+                  {activeVeh.gear}
+                </span>
+              </div>
+              <div className="mt-1.5 flex items-center gap-2 text-[10px]">
+                <span className="px-1.5 py-0.5 bg-sky-500/15 border border-sky-400/30 text-sky-300 font-semibold">
+                  {surfaceLabel}
+                </span>
+                {activeVeh.handbrake && (
+                  <span className="px-1.5 py-0.5 bg-amber-500/20 border border-amber-400/40 text-amber-300 font-semibold">
+                    HANDBRAKE
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* Vehicle Armor, Fuel & Driver Health */}
+            <div className="col-span-5 space-y-1.5">
+              <div>
+                <div className="flex items-center justify-between text-[11px] mb-0.5">
+                  <span className="inline-flex items-center gap-1 text-slate-300">
+                    <Wrench className="w-3 h-3 text-emerald-400" />
+                    <span>Chassis</span>
+                  </span>
+                  <span className="font-mono-tabular text-slate-200">
+                    {Math.round(activeVeh.health)} / {activeVeh.maxHealth}
+                  </span>
+                </div>
+                <div className="h-2 bg-white/10">
+                  <div
+                    className={`h-full transition-all duration-100 ${vehHpColor}`}
+                    style={{ width: `${vehHpPct}%` }}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between text-[11px] mb-0.5">
+                  <span className="inline-flex items-center gap-1 text-slate-300">
+                    <Fuel className="w-3 h-3 text-amber-400" />
+                    <span>Fuel</span>
+                  </span>
+                  <span className="font-mono-tabular text-slate-200">
+                    {Math.round(vehFuelPct)}%
+                  </span>
+                </div>
+                <div className="h-1.5 bg-white/10">
+                  <div
+                    className="h-full bg-amber-400 transition-all duration-100"
+                    style={{ width: `${vehFuelPct}%` }}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between text-[10px] mb-0.5">
+                  <span className="text-slate-400">Driver Health</span>
+                  <span className="font-mono-tabular font-semibold text-slate-200">
+                    {Math.ceil(hud.health)} / {hud.maxHealth}
+                  </span>
+                </div>
+                <div className="h-1.5 bg-white/10">
+                  <div
+                    className={`h-full transition-all duration-100 ${healthColor}`}
+                    style={{ width: `${(hud.health / hud.maxHealth) * 100}%` }}
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Driving Control Hints */}
+            <div className="col-span-3 border-l border-white/10 pl-3 flex flex-col gap-1 text-[10px] text-slate-300">
+              <div className="flex justify-between">
+                <span className="text-amber-400 font-mono-tabular font-semibold">[W/S]</span>
+                <span>Drive / Rev</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-amber-400 font-mono-tabular font-semibold">[A/D]</span>
+                <span>Steer</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-amber-400 font-mono-tabular font-semibold">[Space]</span>
+                <span>Brake</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-sky-400 font-mono-tabular font-semibold">[V]</span>
+                <span>Cam {activeVeh.cameraZoomIndex + 1}/3</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-emerald-400 font-mono-tabular font-semibold">[E]</span>
+                <span>Exit Vehicle</span>
+              </div>
+            </div>
+          </div>
+        </div>
       ) : (
         <div className="fixed bottom-4 left-1/2 -translate-x-1/2 w-[min(540px,92vw)] bg-[#0F1318]/90 border border-white/12 p-3">
           <div className="grid grid-cols-12 gap-3 items-center">

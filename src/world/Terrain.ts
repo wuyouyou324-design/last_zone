@@ -187,6 +187,39 @@ export function getTerrainNormal(
   return new THREE.Vector3(hL - hR, 2 * eps, hD - hU).normalize();
 }
 
+export type SurfaceType = 'road' | 'offroad' | 'sand' | 'snow' | 'shallow_water';
+
+export function getSurfaceTypeAt(
+  x: number,
+  z: number,
+  mapId: MapId = 'emerald_island',
+): SurfaceType {
+  if (mapId === 'emerald_island') {
+    const onNS = Math.abs(x + 64) <= 6.2 && z >= -128 && z <= -8;
+    const onEW = Math.abs(z + 64) <= 6.2 && x >= -128 && x <= -8;
+    const onYard = x >= 22 && x <= 114 && z >= -114 && z <= -22;
+    if (onNS || onEW || onYard) return 'road';
+  } else if (mapId === 'arid_canyon') {
+    const onRunway = Math.abs(x + 76) <= 8.5 && z >= -128 && z <= -8;
+    const onTaxiway = Math.abs(z + 68) <= 5.5 && x >= -80 && x <= -16;
+    const onPad = x >= 22 && x <= 114 && z >= -114 && z <= -22;
+    if (onRunway || onTaxiway || onPad) return 'road';
+  } else if (mapId === 'frost_ridge') {
+    const onNS = Math.abs(x + 64) <= 5.6 && z >= -126 && z <= -11;
+    const onEW = Math.abs(z + 64) <= 5.6 && x >= -126 && x <= -11;
+    const onPad = x >= 22 && x <= 114 && z >= -114 && z <= -22;
+    if (onNS || onEW || onPad) return 'road';
+  }
+
+  const h = getTerrainHeight(x, z, mapId);
+  if (mapId !== 'arid_canyon' && h < 0.35) {
+    return 'shallow_water';
+  }
+  if (mapId === 'arid_canyon') return 'sand';
+  if (mapId === 'frost_ridge') return 'snow';
+  return 'offroad';
+}
+
 export class TerrainSystem {
   public readonly mesh: THREE.Mesh;
   public readonly waterMesh: THREE.Mesh;

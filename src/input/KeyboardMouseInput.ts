@@ -28,6 +28,7 @@ export class KeyboardMouseInput {
   private pendingJump = false;
   private pendingReload = false;
   private pendingInteract = false;
+  private pendingVehicleInteract = false;
   private pendingSwitchPrimary = false;
   private pendingSwitchSecondary = false;
   private pendingQuickHeal = false;
@@ -176,6 +177,7 @@ export class KeyboardMouseInput {
     out.jumpPressed = this.pendingJump;
     out.reload = this.pendingReload;
     out.interact = this.pendingInteract;
+    out.vehicleInteract = this.pendingVehicleInteract;
     out.switchPrimary = this.pendingSwitchPrimary;
     out.switchSecondary = this.pendingSwitchSecondary;
     out.quickHeal = this.pendingQuickHeal;
@@ -188,6 +190,7 @@ export class KeyboardMouseInput {
     this.pendingJump = false;
     this.pendingReload = false;
     this.pendingInteract = false;
+    this.pendingVehicleInteract = false;
     this.pendingSwitchPrimary = false;
     this.pendingSwitchSecondary = false;
     this.pendingQuickHeal = false;
@@ -266,6 +269,9 @@ export class KeyboardMouseInput {
         break;
       case 'KeyF':
         if (!e.repeat) this.pendingInteract = true;
+        break;
+      case 'KeyE':
+        if (!e.repeat) this.pendingVehicleInteract = true;
         break;
       case 'KeyR':
         if (!e.repeat) this.pendingReload = true;
