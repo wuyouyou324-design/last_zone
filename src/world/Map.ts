@@ -1,8 +1,9 @@
 import * as THREE from 'three';
 import { PhysicsWorld } from '../core/PhysicsWorld';
-import { BiomeZone, MapId } from '../types/game';
+import { BiomeZone, DoorPrompt, MapId } from '../types/game';
 import { EnvironmentSystem, ObstacleBounds } from './Environment';
 import { MaterialLibrary } from './Materials';
+import { MultiStoryBuilding } from './MultiStoryBuilding';
 import {
   getTerrainHeight,
   getZoneAt,
@@ -57,6 +58,44 @@ export class IslandMap {
     return getZoneAt(x, z, this.mapId);
   }
 
+  public get multiStoryBuildings(): readonly MultiStoryBuilding[] {
+    return this.environment.multiStoryBuildings;
+  }
+
+  public update(dt: number): void {
+    this.environment.update(dt);
+  }
+
+  public resetDoors(): void {
+    this.environment.resetInteractive();
+  }
+
+  public findNearestDoor(
+    x: number,
+    feetY: number,
+    z: number,
+    maxDist = 2.75,
+  ): { prompt: DoorPrompt; distSq: number } | null {
+    let best: { prompt: DoorPrompt; distSq: number } | null = null;
+    for (const b of this.environment.multiStoryBuildings) {
+      const candidate = b.findNearestDoor(x, feetY, z, maxDist);
+      if (candidate && (!best || candidate.distSq < best.distSq)) {
+        best = candidate;
+      }
+    }
+    return best;
+  }
+
+  public toggleDoor(
+    doorId: string,
+  ): { toggled: boolean; isOpen: boolean; x: number; y: number; z: number } | null {
+    for (const b of this.environment.multiStoryBuildings) {
+      const res = b.toggleDoor(doorId);
+      if (res) return res;
+    }
+    return null;
+  }
+
   public getObstacles(): ObstacleBounds[] {
     return this.environment.obstacles;
   }
@@ -67,6 +106,11 @@ export class IslandMap {
     if (h < 1.1) return false;
     for (const obs of this.environment.obstacles) {
       if (Math.hypot(x - obs.x, z - obs.z) < obs.radius + margin) {
+        return false;
+      }
+    }
+    for (const b of this.environment.multiStoryBuildings) {
+      if (b.containsXZ(x, z, margin)) {
         return false;
       }
     }
@@ -124,11 +168,16 @@ export class IslandMap {
       ],
     };
 
-    return curatedByMap[this.mapId].map(([x, z]) => ({
+    const points = curatedByMap[this.mapId].map(([x, z]) => ({
       x,
       y: this.getHeightAt(x, z),
       z,
     }));
+    const indoor = this.environment.getMultiStoryLootSpawns();
+    for (const pt of indoor) {
+      points.push(pt);
+    }
+    return points;
   }
 
   private generateMinimapImage(): HTMLCanvasElement {
@@ -262,6 +311,17 @@ export class IslandMap {
       const [ox, oz] = toMap(obs.x, obs.z);
       const rad = Math.max(1.5, (obs.radius / ISLAND_SIZE) * size * 0.75);
       ctx.fillRect(ox - rad, oz - rad, rad * 2, rad * 2);
+    }
+
+    for (const fp of this.environment.buildingFootprints) {
+      const [bx, bz] = toMap(fp.x, fp.z);
+      const bw = Math.max(4, (fp.w / ISLAND_SIZE) * size);
+      const bd = Math.max(4, (fp.d / ISLAND_SIZE) * size);
+      ctx.fillStyle = 'rgba(245, 158, 11, 0.45)';
+      ctx.fillRect(bx - bw * 0.5, bz - bd * 0.5, bw, bd);
+      ctx.strokeStyle = 'rgba(245, 158, 11, 0.9)';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(bx - bw * 0.5, bz - bd * 0.5, bw, bd);
     }
 
     return canvas;

@@ -512,6 +512,18 @@ export const HUD: React.FC<HUDProps> = ({
           </div>
         )}
 
+        {!isTouchLayout && !activeVeh && hud.doorPrompt && (
+          <div
+            data-testid="desktop-door-prompt"
+            className="bg-[#0F1318]/92 border border-emerald-400/55 px-4 py-2 text-xs text-slate-100 flex items-center gap-2"
+          >
+            <span className="font-mono-tabular font-bold text-emerald-400">[F]</span>
+            <span>
+              {hud.doorPrompt.isOpen ? 'Close' : 'Open'} {hud.doorPrompt.label}
+            </span>
+          </div>
+        )}
+
         {!isTouchLayout && !activeVeh && hud.lootPrompt && (
           <div className="bg-[#0F1318]/92 border border-amber-400/50 px-4 py-2 text-xs text-slate-100 flex items-center gap-2">
             <span className="font-mono-tabular font-bold text-amber-400">[F]</span>

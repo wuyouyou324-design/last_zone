@@ -364,6 +364,26 @@ export class AudioSystem {
     osc.stop(now + 0.14);
   }
 
+  public playDoorToggle(opening: boolean, distanceScale = 1): void {
+    if (!this.ctx || !this.masterGain || this.volume <= 0.01 || distanceScale <= 0.04) return;
+    const now = this.ctx.currentTime;
+    const scale = Math.min(1, distanceScale);
+
+    const osc = this.ctx.createOscillator();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(opening ? 240 : 180, now);
+    osc.frequency.exponentialRampToValueAtTime(opening ? 130 : 72, now + 0.12);
+
+    const gain = this.ctx.createGain();
+    gain.gain.setValueAtTime(0.18 * scale, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.14);
+
+    osc.connect(gain);
+    gain.connect(this.masterGain);
+    osc.start(now);
+    osc.stop(now + 0.15);
+  }
+
   public playVehicleCollision(intensity: number): void {
     if (!this.ctx || !this.masterGain || !this.noiseBuffer || this.volume <= 0.01) return;
     const scale = Math.max(0.15, Math.min(1.0, intensity));

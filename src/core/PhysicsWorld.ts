@@ -103,6 +103,71 @@ export class PhysicsWorld {
     return collider;
   }
 
+  public addStaticBoxEuler(
+    cx: number,
+    cy: number,
+    cz: number,
+    hx: number,
+    hy: number,
+    hz: number,
+    rotX = 0,
+    rotY = 0,
+    rotZ = 0,
+  ): RAPIER.Collider {
+    const c1 = Math.cos(rotY * 0.5);
+    const s1 = Math.sin(rotY * 0.5);
+    const c2 = Math.cos(rotX * 0.5);
+    const s2 = Math.sin(rotX * 0.5);
+    const c3 = Math.cos(rotZ * 0.5);
+    const s3 = Math.sin(rotZ * 0.5);
+
+    const qx = c1 * s2 * c3 + s1 * c2 * s3;
+    const qy = s1 * c2 * c3 - c1 * s2 * s3;
+    const qz = c1 * c2 * s3 - s1 * s2 * c3;
+    const qw = c1 * c2 * c3 + s1 * s2 * s3;
+
+    const bodyDesc = RAPIER.RigidBodyDesc.fixed()
+      .setTranslation(cx, cy, cz)
+      .setRotation({ x: qx, y: qy, z: qz, w: qw });
+    const body = this.world.createRigidBody(bodyDesc);
+    const colliderDesc = RAPIER.ColliderDesc.cuboid(hx, hy, hz);
+    const collider = this.world.createCollider(colliderDesc, body);
+    this.staticColliders.add(collider.handle);
+    return collider;
+  }
+
+  public registerKinematicWorldBox(
+    cx: number,
+    cy: number,
+    cz: number,
+    hx: number,
+    hy: number,
+    hz: number,
+    rotationY = 0,
+  ): { body: RAPIER.RigidBody; collider: RAPIER.Collider } {
+    const halfYaw = rotationY * 0.5;
+    const bodyDesc = RAPIER.RigidBodyDesc.kinematicPositionBased()
+      .setTranslation(cx, cy, cz)
+      .setRotation({ x: 0, y: Math.sin(halfYaw), z: 0, w: Math.cos(halfYaw) });
+    const body = this.world.createRigidBody(bodyDesc);
+    const colliderDesc = RAPIER.ColliderDesc.cuboid(hx, hy, hz);
+    const collider = this.world.createCollider(colliderDesc, body);
+    this.staticColliders.add(collider.handle);
+    return { body, collider };
+  }
+
+  public setKinematicWorldBoxTransform(
+    body: RAPIER.RigidBody,
+    x: number,
+    y: number,
+    z: number,
+    rotationY: number,
+  ): void {
+    const halfYaw = rotationY * 0.5;
+    body.setNextKinematicTranslation({ x, y, z });
+    body.setNextKinematicRotation({ x: 0, y: Math.sin(halfYaw), z: 0, w: Math.cos(halfYaw) });
+  }
+
   public addStaticCylinder(
     cx: number,
     cy: number,

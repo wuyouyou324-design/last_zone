@@ -17,6 +17,7 @@ export interface PlayerInput {
   jumpPressed: boolean;
   reload: boolean;
   interact: boolean;
+  doorInteract: boolean;
   vehicleInteract: boolean;
   switchPrimary: boolean;
   switchSecondary: boolean;
@@ -41,6 +42,7 @@ export function createEmptyPlayerInput(): PlayerInput {
     jumpPressed: false,
     reload: false,
     interact: false,
+    doorInteract: false,
     vehicleInteract: false,
     switchPrimary: false,
     switchSecondary: false,

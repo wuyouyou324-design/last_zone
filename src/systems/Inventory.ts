@@ -301,7 +301,12 @@ export class InventorySystem {
     }
   }
 
-  public findNearestLoot(px: number, py: number, pz: number, maxRange = 3.2): LootPrompt | null {
+  public findNearestLootWithDistance(
+    px: number,
+    py: number,
+    pz: number,
+    maxRange = 3.2,
+  ): { prompt: LootPrompt; distSq: number } | null {
     let best: LootNode | null = null;
     let bestDistSq = maxRange * maxRange;
     for (const node of this.lootNodes) {
@@ -316,11 +321,18 @@ export class InventorySystem {
     }
     if (!best) return null;
     return {
-      uid: best.uid,
-      name: best.item.name,
-      category: best.item.category,
-      quantity: best.item.quantity,
+      prompt: {
+        uid: best.uid,
+        name: best.item.name,
+        category: best.item.category,
+        quantity: best.item.quantity,
+      },
+      distSq: bestDistSq,
     };
+  }
+
+  public findNearestLoot(px: number, py: number, pz: number, maxRange = 3.2): LootPrompt | null {
+    return this.findNearestLootWithDistance(px, py, pz, maxRange)?.prompt ?? null;
   }
 
   public pickupNearestLoot(px: number, py: number, pz: number, maxRange = 3.2): InventoryItem | null {

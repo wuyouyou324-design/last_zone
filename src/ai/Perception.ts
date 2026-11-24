@@ -79,9 +79,11 @@ export function isTargetWithinDetectionCone(
   alreadyTracked: boolean,
 ): boolean {
   const dx = actor.x - bot.x;
+  const dy = actor.y - bot.y;
   const dz = actor.z - bot.z;
   const distSqXZ = dx * dx + dz * dz;
-  if (distSqXZ < 0.25) return true;
+  const distSq3D = distSqXZ + dy * dy;
+  if (distSqXZ < 0.25 && Math.abs(dy) < 2.2) return true;
 
   // Crouching targets are harder to spot at distance; sprinting/recently firing targets stand out slightly more
   let effectiveSightRange = config.sightRange;
@@ -97,11 +99,11 @@ export function isTargetWithinDetectionCone(
     effectiveSightRange *= 1.12;
   }
 
-  if (distSqXZ > effectiveSightRange * effectiveSightRange) {
+  if (distSq3D > effectiveSightRange * effectiveSightRange) {
     return false;
   }
 
-  const distXZ = Math.sqrt(distSqXZ);
+  const distXZ = Math.sqrt(Math.max(0.01, distSqXZ));
   const invDist = 1 / distXZ;
   const { fx, fz } = getBotForwardXZ(bot.yaw);
   const dot = (dx * invDist) * fx + (dz * invDist) * fz;
@@ -252,8 +254,9 @@ export function registerSoundForBot(
   if (bot.state === 'Eliminated' || event.sourceId === bot.id) return;
 
   const dx = event.x - bot.x;
+  const dy = event.y - bot.y;
   const dz = event.z - bot.z;
-  const dist = Math.hypot(dx, dz);
+  const dist = Math.hypot(dx, dy, dz);
   const maxHear = Math.min(config.hearingRange, event.radius);
   if (dist > maxHear || dist < 1.5) return;
 

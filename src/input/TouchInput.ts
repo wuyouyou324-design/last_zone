@@ -17,6 +17,7 @@ export class TouchInput {
   private pendingJump = false;
   private pendingReload = false;
   private pendingInteract = false;
+  private pendingDoorInteract = false;
   private pendingVehicleInteract = false;
   private pendingCycleWeapon = false;
   private pendingSwitchPrimary = false;
@@ -123,6 +124,11 @@ export class TouchInput {
     this.pendingInteract = true;
   }
 
+  public triggerDoorInteract(): void {
+    this.onActivity?.();
+    this.pendingDoorInteract = true;
+  }
+
   public triggerVehicleInteract(): void {
     this.onActivity?.();
     this.pendingVehicleInteract = true;
@@ -219,6 +225,7 @@ export class TouchInput {
     out.jumpPressed = this.pendingJump;
     out.reload = this.pendingReload;
     out.interact = this.pendingInteract;
+    out.doorInteract = this.pendingDoorInteract;
     out.vehicleInteract = this.pendingVehicleInteract;
     out.cycleWeapon = this.pendingCycleWeapon;
     out.switchPrimary = this.pendingSwitchPrimary;
@@ -233,6 +240,7 @@ export class TouchInput {
     this.pendingJump = false;
     this.pendingReload = false;
     this.pendingInteract = false;
+    this.pendingDoorInteract = false;
     this.pendingVehicleInteract = false;
     this.pendingCycleWeapon = false;
     this.pendingSwitchPrimary = false;

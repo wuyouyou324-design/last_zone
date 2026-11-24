@@ -1,6 +1,7 @@
 import { AIPersonality, BotState, WeaponSpec } from '../types/game';
 import { WEAPON_CATALOG } from '../systems/Inventory';
 import { PERSONALITY_SEQUENCE } from './AIConfig';
+import { BuildingNavWaypoint } from './BuildingNav';
 
 export interface BotMemoryPosition {
   valid: boolean;
@@ -25,6 +26,7 @@ export interface BotEntity {
   state: BotState;
   weapon: WeaponSpec;
   targetX: number;
+  targetY: number;
   targetZ: number;
   targetEnemyId: string | null;
   stateTimer: number;
@@ -39,6 +41,14 @@ export interface BotEntity {
   variantIndex: number;
   lastFiredAt: number;
   colliderHandle: number;
+
+  // Multi-story floor-aware navigation state
+  navPath: BuildingNavWaypoint[];
+  navRepathTimer: number;
+  stuckTimer: number;
+  stuckAnchorX: number;
+  stuckAnchorY: number;
+  stuckAnchorZ: number;
 
   // Perception, memory, reaction, and anti-focus-fire state
   perceptionTimer: number;
@@ -95,6 +105,7 @@ export function createBotEntity(
     state: 'Idle',
     weapon,
     targetX: x,
+    targetY: y,
     targetZ: z,
     targetEnemyId: null,
     stateTimer: 0.8 + Math.random() * 1.4,
@@ -109,6 +120,13 @@ export function createBotEntity(
     variantIndex: index,
     lastFiredAt: -10,
     colliderHandle,
+
+    navPath: [],
+    navRepathTimer: 0,
+    stuckTimer: 0,
+    stuckAnchorX: x,
+    stuckAnchorY: y,
+    stuckAnchorZ: z,
 
     perceptionTimer: (index % 6) * 0.02, // staggered initial perception across frames
     reactionTimer: 0,

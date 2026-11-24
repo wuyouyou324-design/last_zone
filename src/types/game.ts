@@ -153,6 +153,12 @@ export interface LootPrompt {
   quantity: number;
 }
 
+export interface DoorPrompt {
+  id: string;
+  label: string;
+  isOpen: boolean;
+}
+
 export interface HealingState {
   itemName: string;
   progress: number; // 0..1
@@ -190,6 +196,7 @@ export interface HudSnapshot {
   inventory: InventoryItem[];
   safeZone: SafeZoneSnapshot;
   lootPrompt: LootPrompt | null;
+  doorPrompt: DoorPrompt | null;
   vehiclePrompt: VehiclePrompt | null;
   activeVehicle: VehicleHudState | null;
   healing: HealingState | null;

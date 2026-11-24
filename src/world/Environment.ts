@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { PhysicsWorld } from '../core/PhysicsWorld';
 import { MapId } from '../types/game';
 import { MaterialLibrary } from './Materials';
+import { MultiStoryBuilding } from './MultiStoryBuilding';
 import { getTerrainHeight } from './Terrain';
 
 export interface ObstacleBounds {
@@ -10,9 +11,19 @@ export interface ObstacleBounds {
   radius: number;
 }
 
+export interface BuildingFootprint {
+  x: number;
+  z: number;
+  w: number;
+  d: number;
+  rotY: number;
+}
+
 export class EnvironmentSystem {
   public readonly group = new THREE.Group();
   public readonly obstacles: ObstacleBounds[] = [];
+  public readonly multiStoryBuildings: MultiStoryBuilding[] = [];
+  public readonly buildingFootprints: BuildingFootprint[] = [];
   private geometries: THREE.BufferGeometry[] = [];
   private treeTrunks!: THREE.InstancedMesh;
   private treeCanopyLower!: THREE.InstancedMesh;
@@ -120,6 +131,29 @@ export class EnvironmentSystem {
     roadEW.receiveShadow = true;
     this.group.add(roadEW);
 
+    // Primary enterable Two-Story Tactical Compound at (-42, -42)
+    const hqX = -42;
+    const hqZ = -42;
+    const hqY = this.heightAt(hqX, hqZ);
+    const hqBuilding = new MultiStoryBuilding(
+      'urban-hq-2f',
+      hqX,
+      hqY,
+      hqZ,
+      0,
+      this.materials,
+      this.physics,
+    );
+    this.group.add(hqBuilding.group);
+    this.multiStoryBuildings.push(hqBuilding);
+    this.buildingFootprints.push({
+      x: hqX,
+      z: hqZ,
+      w: hqBuilding.width,
+      d: hqBuilding.depth,
+      rotY: 0,
+    });
+
     const buildings: Array<{
       x: number;
       z: number;
@@ -129,7 +163,6 @@ export class EnvironmentSystem {
       rotY: number;
       brick: boolean;
     }> = [
-      { x: -42, z: -42, w: 14, d: 12, h: 8.5, rotY: 0, brick: true },
       { x: -86, z: -44, w: 16, d: 12, h: 10.5, rotY: Math.PI / 2, brick: false },
       { x: -44, z: -88, w: 15, d: 13, h: 7.5, rotY: Math.PI, brick: false },
       { x: -88, z: -88, w: 14, d: 14, h: 12.0, rotY: 0, brick: true },
@@ -1410,6 +1443,26 @@ export class EnvironmentSystem {
     this.physics.addStaticBox(wx, worldY, wz, hx, hy, hz, rotY);
   }
 
+  public update(dt: number): void {
+    for (let i = 0; i < this.multiStoryBuildings.length; i++) {
+      this.multiStoryBuildings[i].update(dt);
+    }
+  }
+
+  public resetInteractive(): void {
+    for (let i = 0; i < this.multiStoryBuildings.length; i++) {
+      this.multiStoryBuildings[i].resetDoors();
+    }
+  }
+
+  public getMultiStoryLootSpawns(): Array<{ x: number; y: number; z: number }> {
+    const out: Array<{ x: number; y: number; z: number }> = [];
+    for (const b of this.multiStoryBuildings) {
+      out.push(...b.getIndoorLootSpawns());
+    }
+    return out;
+  }
+
   public applyQuality(quality: 'low' | 'medium' | 'high'): void {
     const treeRatio = quality === 'low' ? 0.55 : quality === 'medium' ? 0.8 : 1.0;
     const rockRatio = quality === 'low' ? 0.6 : quality === 'medium' ? 0.85 : 1.0;
@@ -1425,6 +1478,8 @@ export class EnvironmentSystem {
   }
 
   public dispose(): void {
+    this.multiStoryBuildings.forEach((b) => b.dispose());
+    this.multiStoryBuildings.length = 0;
     this.geometries.forEach((g) => g.dispose());
     this.geometries = [];
   }

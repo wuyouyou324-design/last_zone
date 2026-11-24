@@ -15,6 +15,7 @@ import {
   ChevronRight,
   LogOut,
   OctagonAlert,
+  DoorOpen,
 } from 'lucide-react';
 import { TouchInput } from '../input/TouchInput';
 import { HudSnapshot } from '../types/game';
@@ -544,8 +545,9 @@ export const TouchControlsUI: React.FC<TouchControlsUIProps> = ({
             />
           </div>
 
-          {/* Contextual Vehicle Entry & Loot Collect Prompts */}
+          {/* Contextual Vehicle Entry, Door & Loot Collect Prompts */}
           {(hud.lootPrompt ||
+            hud.doorPrompt ||
             (hud.vehiclePrompt && !hud.vehiclePrompt.disabled && !hud.vehiclePrompt.occupied)) && (
             <div
               className={`fixed z-20 pointer-events-auto flex flex-col items-end gap-2 ${
@@ -570,6 +572,23 @@ export const TouchControlsUI: React.FC<TouchControlsUIProps> = ({
                   <Car className="w-4 h-4" />
                   <span className="truncate max-w-[148px]">
                     Drive {hud.vehiclePrompt.name}
+                  </span>
+                </button>
+              )}
+
+              {hud.doorPrompt && (
+                <button
+                  type="button"
+                  data-testid="touch-door-btn"
+                  onPointerDown={(e) => {
+                    e.stopPropagation();
+                    touchInput.triggerDoorInteract();
+                  }}
+                  className="h-11 px-3.5 bg-emerald-500 active:bg-emerald-400 border border-emerald-300 text-slate-950 font-display font-bold text-xs flex items-center gap-2 shadow-lg cursor-pointer touch-gameplay-surface"
+                >
+                  <DoorOpen className="w-4 h-4" />
+                  <span className="truncate max-w-[148px]">
+                    {hud.doorPrompt.isOpen ? 'Close' : 'Open'} Door
                   </span>
                 </button>
               )}

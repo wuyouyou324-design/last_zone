@@ -328,6 +328,7 @@ export class Game {
     this.inventory.resetStarterLoadout();
     this.inventory.populateWorldLoot(this.map.generateLootLocations());
     this.safeZone.reset();
+    this.map.resetDoors();
 
     // Clear old bot rigs and respawn vehicles cleanly for match
     this.clearBotRigs();
@@ -639,8 +640,11 @@ export class Game {
         }
 
         if (!activeVeh) {
+          if (playerInput.doorInteract) {
+            this.toggleNearestDoorAction();
+          }
           if (playerInput.interact) {
-            this.pickupNearestLootAction();
+            this.handleInteractAction();
           }
           if (playerInput.reload) {
             this.startReload();
@@ -876,8 +880,9 @@ export class Game {
         }
       }
 
-      // 5. Loot hover animation
+      // 5. Loot hover animation & animated building doors
       this.inventory.updateLootVisuals(elapsed);
+      this.map.update(dt);
 
       // 6. AI Opponents FSM update & visual sync
       const playerFeetY = this.movement.getFeetY();
@@ -903,6 +908,11 @@ export class Game {
         (ev) => this.handleBotFire(ev),
         (bot) => this.handleBotEliminated(bot, 'Safe Zone', 'Storm'),
         mapHeightAt,
+        this.map.multiStoryBuildings,
+        (dx, _dy, dz, opening) => {
+          const dist = Math.hypot(dx - this.movement.position.x, dz - this.movement.position.z);
+          this.audio.playDoorToggle(opening, Math.max(0, 1 - dist / 34));
+        },
       );
 
       this.syncBotVisuals(dt);
@@ -1282,6 +1292,42 @@ export class Game {
     this.audio.playReload();
   }
 
+  private handleInteractAction(): void {
+    const px = this.movement.position.x;
+    const py = this.movement.getFeetY();
+    const pz = this.movement.position.z;
+
+    const lootMatch = this.inventory.findNearestLootWithDistance(px, py, pz);
+    const doorMatch = this.map.findNearestDoor(px, py, pz);
+
+    if (doorMatch && (!lootMatch || doorMatch.distSq <= lootMatch.distSq)) {
+      const res = this.map.toggleDoor(doorMatch.prompt.id);
+      if (res) {
+        this.audio.playDoorToggle(res.isOpen, 1);
+        this.emitHudSnapshot();
+      }
+      return;
+    }
+
+    if (lootMatch) {
+      this.pickupNearestLootAction();
+    }
+  }
+
+  private toggleNearestDoorAction(): void {
+    const doorMatch = this.map.findNearestDoor(
+      this.movement.position.x,
+      this.movement.getFeetY(),
+      this.movement.position.z,
+    );
+    if (!doorMatch) return;
+    const res = this.map.toggleDoor(doorMatch.prompt.id);
+    if (res) {
+      this.audio.playDoorToggle(res.isOpen, 1);
+      this.emitHudSnapshot();
+    }
+  }
+
   private pickupNearestLootAction(): void {
     const picked = this.inventory.pickupNearestLoot(
       this.movement.position.x,
@@ -1319,6 +1365,25 @@ export class Game {
           this.movement.position.z,
         );
 
+    const lootMatch = activeVeh
+      ? null
+      : this.inventory.findNearestLootWithDistance(
+          this.movement.position.x,
+          playerFeetY,
+          this.movement.position.z,
+        );
+    const doorMatch = activeVeh
+      ? null
+      : this.map.findNearestDoor(
+          this.movement.position.x,
+          playerFeetY,
+          this.movement.position.z,
+        );
+
+    const isTouch = this.input.getResolvedMode() === 'touch';
+    const desktopPreferDoor =
+      !isTouch && doorMatch !== null && (!lootMatch || doorMatch.distSq <= lootMatch.distSq);
+
     this.onHudUpdate({
       screen: this.screen,
       mapId: this.activeMapId,
@@ -1344,13 +1409,16 @@ export class Game {
       equipped: { ...this.inventory.equipped },
       inventory: this.inventory.items.map((i) => ({ ...i })),
       safeZone: this.safeZone.getSnapshot(this.movement.position.x, this.movement.position.z),
-      lootPrompt: activeVeh
-        ? null
-        : this.inventory.findNearestLoot(
-            this.movement.position.x,
-            playerFeetY,
-            this.movement.position.z,
-          ),
+      lootPrompt: isTouch
+        ? lootMatch?.prompt ?? null
+        : desktopPreferDoor
+          ? null
+          : lootMatch?.prompt ?? null,
+      doorPrompt: isTouch
+        ? doorMatch?.prompt ?? null
+        : desktopPreferDoor
+          ? doorMatch?.prompt ?? null
+          : null,
       vehiclePrompt,
       activeVehicle: activeVeh
         ? this.vehicles.getHudState(activeVeh, this.cameraCtrl.drivingZoomIndex)
